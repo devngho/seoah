@@ -1,0 +1,17 @@
+[project]
+name = "seoah"
+version = "0.1.0"
+description = "MoE sub-sub club leader V-Tuber"
+readme = "README.md"
+authors = [
+    { name = "devngho", email = "yjh135908@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+seoah = "seoah:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
