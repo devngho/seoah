@@ -1,0 +1,261 @@
+@import url('https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=Gowun+Dodum&display=swap');
+
+:root {
+  --wood-dark: #2e1a0d;
+  --wood-base: #5c3a20;
+  --wood-mid: #7a4f2b;
+  --wood-light: #9c6b3c;
+  --wood-highlight: #c08d54;
+  --cream: #f3e6cc;
+  --cream-dim: #d8c6a3;
+  --stone-black: #181818;
+  --stone-white: #f5f0e6;
+  --brass: #c9a24b;
+  --board-line: rgba(20, 10, 2, 0.45);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+#root { height: 100%; }
+
+body {
+  font-family: 'Gowun Dodum', sans-serif;
+  color: var(--cream);
+}
+
+.home,
+.game {
+  position: relative;
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 2rem 1rem;
+  background:
+    repeating-linear-gradient(90deg, rgba(0,0,0,0.06) 0px, rgba(0,0,0,0.06) 1px, transparent 1px, transparent 7px),
+    repeating-linear-gradient(100deg, rgba(255,220,170,0.05) 0px, transparent 2px, transparent 40px, rgba(255,220,170,0.04) 42px, transparent 90px),
+    linear-gradient(160deg, var(--wood-light) 0%, var(--wood-base) 45%, var(--wood-dark) 100%);
+}
+
+.home__board-overlay {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(20,10,2,0.35) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(20,10,2,0.35) 1px, transparent 1px);
+  background-size: 64px 64px;
+  background-position: center;
+  mask-image: radial-gradient(ellipse at center, black 35%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 35%, transparent 78%);
+  pointer-events: none;
+}
+
+.home::after,
+.game::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 160px 40px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+.home__content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.1rem;
+}
+
+.home__title {
+  font-family: 'Gowun Batang', serif;
+  font-weight: 700;
+  font-size: clamp(4rem, 14vw, 7.5rem);
+  letter-spacing: 0.15em;
+  margin: 0;
+  color: var(--cream);
+  text-shadow: 0 1px 0 rgba(255,235,200,0.15), 0 3px 10px rgba(0,0,0,0.55);
+}
+
+.home__subtitle {
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  color: var(--cream-dim);
+  margin: 0 0 1.6rem;
+}
+
+.home__start-btn {
+  font-family: 'Gowun Batang', serif;
+  font-size: 1.35rem;
+  letter-spacing: 0.2em;
+  padding: 0.85rem 3rem;
+  color: var(--cream);
+  background: linear-gradient(180deg, var(--wood-mid), var(--wood-dark));
+  border: 1px solid rgba(201, 162, 75, 0.5);
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 170, 0.25),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.45),
+    0 6px 14px rgba(0, 0, 0, 0.4);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.home__start-btn:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 170, 0.3),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.45),
+    0 10px 18px rgba(0, 0, 0, 0.45);
+  border-color: var(--brass);
+}
+
+.home__start-btn:active { transform: translateY(0); box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.5); }
+.home__start-btn:focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; }
+
+/* 돌 (공용) */
+.stone { display: inline-block; border-radius: 50%; }
+
+.stone--black {
+  background: radial-gradient(circle at 35% 30%, #4a4a4a, var(--stone-black) 70%);
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.6);
+}
+
+.stone--white {
+  background: radial-gradient(circle at 35% 30%, #ffffff, var(--stone-white) 75%);
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.5);
+}
+
+.home__stones { display: flex; gap: 0.5rem; margin-bottom: 0.4rem; }
+.home__stones .stone { width: 14px; height: 14px; }
+
+/* 색 선택 화면 */
+.color-select {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.4rem;
+}
+
+.color-select__title {
+  font-family: 'Gowun Batang', serif;
+  font-size: 1.8rem;
+  letter-spacing: 0.1em;
+  margin: 0;
+  color: var(--cream);
+}
+
+.color-select__options { display: flex; gap: 1.5rem; }
+
+.color-select__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 1.6rem 2.2rem;
+  font-family: 'Gowun Dodum', sans-serif;
+  font-size: 1.05rem;
+  color: var(--cream);
+  background: linear-gradient(180deg, var(--wood-mid), var(--wood-dark));
+  border: 1px solid rgba(201, 162, 75, 0.4);
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 220, 170, 0.2), 0 6px 14px rgba(0, 0, 0, 0.4);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.color-select__btn:hover { transform: translateY(-3px); border-color: var(--brass); }
+.color-select__btn .stone { width: 34px; height: 34px; }
+
+.color-select__hint { font-size: 0.85rem; color: var(--cream-dim); letter-spacing: 0.05em; }
+
+/* 게임 화면 */
+.game__content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2rem;
+  width: 100%;
+}
+
+.turn-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  color: var(--cream-dim);
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.5rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(201, 162, 75, 0.25);
+}
+
+.turn-bar__stone { width: 14px; height: 14px; }
+
+.board {
+  position: relative;
+  width: min(90vw, 600px);
+  aspect-ratio: 1;
+  background: linear-gradient(160deg, var(--wood-highlight), var(--wood-mid));
+  border-radius: 6px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), inset 0 0 0 2px rgba(201, 162, 75, 0.35);
+  background-image:
+    linear-gradient(var(--board-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--board-line) 1px, transparent 1px);
+  background-size: calc(100% / 14) calc(100% / 14);
+  margin: 0 auto;
+}
+
+.board__point {
+  position: absolute;
+  width: calc(100% / 14);
+  height: calc(100% / 14);
+  transform: translate(-50%, -50%);
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.board__star {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--board-line);
+}
+
+.board__point .stone { width: 82%; height: 82%; }
+
+.result-banner {
+  position: relative;
+  z-index: 1;
+  margin-top: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.4rem 2rem;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(201, 162, 75, 0.4);
+  border-radius: 10px;
+}
+
+.result-banner__text {
+  font-family: 'Gowun Batang', serif;
+  font-size: 1.4rem;
+  letter-spacing: 0.08em;
+  margin: 0;
+  color: var(--cream);
+}
