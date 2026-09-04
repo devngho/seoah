@@ -227,7 +227,7 @@ func IsForbidden(b *Board, y, x int, stone Stone, cfg RenjuConfig) bool {
 // ============================================================
 
 func Evaluate(b *Board, player Stone) int {
-	return evaluateForStone(b, player) - evaluateForStone(b, opponent(player))
+	return evaluateForStone(b, player) - evaluateForStone(b, opponent(player))*12/10
 }
 
 func evaluateForStone(b *Board, s Stone) int {
