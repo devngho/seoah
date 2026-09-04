@@ -19,7 +19,6 @@ def get_client() -> Client:
     config = load_config()
     
     if client is None or client._api_client.api_key != config.api_key: # hot reload the client if the API key has changed
-        print(config.api_key)
         c = Client(api_key=config.api_key)
         client = c
     else:

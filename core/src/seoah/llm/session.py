@@ -133,6 +133,15 @@ class Session:
         :param user_input: The input from the user.
         :return: None
         """
+        if self.conversations and self.conversations[-1].role == "user":
+            # If the last interaction is a user input, append to it
+            if len(self.conversations[-1].contents) > 0 and isinstance(self.conversations[-1].contents[-1], TextSessionPart):
+                self.conversations[-1].contents[-1].text += "\n" + user_input
+            else:
+                self.conversations[-1].contents.append(TextSessionPart(text=user_input))
+
+            return
+
         interaction = Interaction(
             role="user",
             contents=[TextSessionPart(text=user_input)],
@@ -141,7 +150,7 @@ class Session:
 
         self.conversations.append(interaction)
 
-    async def next(self) -> AsyncGenerator[SessionPart, Any]:
+    async def next(self) -> AsyncGenerator[Interaction, Any]:
         """
         Continue the conversation with the language model and return the next response stream.
         :return:
@@ -153,7 +162,7 @@ class Session:
         else:
             async with self._mutex:
                 from google.genai import types
-                response = get_client().models.generate_content_stream(
+                response = await get_client().aio.models.generate_content_stream(
                     model=config.backend_model,
                     contents=self.prepare_contents_gemini(),
                     config=types.GenerateContentConfig(
@@ -171,7 +180,8 @@ class Session:
 
                 self.conversations.append(interaction)
 
-                for chunk in response:
+                async for chunk in response:
+                    print(f"chunk: {chunk}")
                     if chunk.usage_metadata is not None:
                         log(lambda: f"Usage metadata: {chunk.usage_metadata}", "DEBUG")
 

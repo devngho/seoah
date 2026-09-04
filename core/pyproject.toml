@@ -2,12 +2,13 @@
 name = "seoah"
 version = "0.1.0"
 description = "MoE sub-sub club leader V-Tuber"
-readme = "README.md"
+readme = "../README.md"
 authors = [
     { name = "devngho", email = "yjh135908@gmail.com" }
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "discord-py>=2.7.1",
     "google-genai>=2.22.0",
     "pydantic>=2.13.5",
 ]
