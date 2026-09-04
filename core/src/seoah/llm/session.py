@@ -180,37 +180,44 @@ class Session:
 
                 self.conversations.append(interaction)
 
-                async for chunk in response:
-                    print(f"chunk: {chunk}")
-                    if chunk.usage_metadata is not None:
-                        log(lambda: f"Usage metadata: {chunk.usage_metadata}", "DEBUG")
+                try:
+                    async for chunk in response:
+                        print(f"chunk: {chunk}")
+                        if chunk.usage_metadata is not None:
+                            log(lambda: f"Usage metadata: {chunk.usage_metadata}", "DEBUG")
 
-                    res = chunk.candidates[0].content
+                        res = chunk.candidates[0].content
 
-                    if res is not None:
-                        if res.parts is None:
-                            continue
+                        if res is not None:
+                            if res.parts is None:
+                                continue
 
-                        for p in res.parts:
-                            if p.text is not None and p.text != "" and (p.thought is None or not p.thought):
-                                # append or update the text part in the interaction
-                                if len(interaction.contents) > 0 and isinstance(interaction.contents[-1], TextSessionPart):
-                                    interaction.contents[-1].text += p.text
-                                else:
-                                    interaction.contents.append(TextSessionPart(text=p.text))
-                            elif p.thought:
-                                # append or update the thought part in the interaction
-                                if len(interaction.contents) > 0 and isinstance(interaction.contents[-1], ThoughtSessionPart):
-                                    interaction.contents[-1].thought += p.text
-                                else:
-                                    interaction.contents.append(ThoughtSessionPart(thought=p.text))
-                            elif p.thought_signature is not None:
-                                interaction.contents.append(RawSessionPart(raw=p))
-                            elif p.tool_call is not None:
-                                interaction.contents.append(ToolCallSessionPart(tool_name=p.tool_call.tool_name, tool_args=p.tool_call.tool_args))
-                            elif p.tool_result is not None:
-                                interaction.contents.append(ToolResultSessionPart(tool_name=p.tool_result.tool_name, tool_result=p.tool_result.tool_result))
+                            for p in res.parts:
+                                if p.text is not None and p.text != "" and (p.thought is None or not p.thought):
+                                    # append or update the text part in the interaction
+                                    if len(interaction.contents) > 0 and isinstance(interaction.contents[-1], TextSessionPart):
+                                        interaction.contents[-1].text += p.text
+                                    else:
+                                        interaction.contents.append(TextSessionPart(text=p.text))
+                                elif p.thought:
+                                    # append or update the thought part in the interaction
+                                    if len(interaction.contents) > 0 and isinstance(interaction.contents[-1], ThoughtSessionPart):
+                                        interaction.contents[-1].thought += p.text
+                                    else:
+                                        interaction.contents.append(ThoughtSessionPart(thought=p.text))
+                                elif p.thought_signature is not None:
+                                    interaction.contents.append(RawSessionPart(raw=p))
+                                elif p.tool_call is not None:
+                                    interaction.contents.append(ToolCallSessionPart(tool_name=p.tool_call.tool_name, tool_args=p.tool_call.tool_args))
+                                elif p.tool_result is not None:
+                                    interaction.contents.append(ToolResultSessionPart(tool_name=p.tool_result.tool_name, tool_result=p.tool_result.tool_result))
 
-                        yield interaction
+                            yield interaction
+                except Exception as e:
+                    yield Interaction(
+                        role="model",
+                        contents=[TextSessionPart(text=f"Error: {str(e)}")],
+                        is_in_progress=False
+                    )
 
                 interaction.is_in_progress = False
