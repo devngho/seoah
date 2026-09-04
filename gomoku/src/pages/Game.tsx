@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, Show, For } from 'solid-js';
+import { createEffect, createSignal, Show, For } from 'solid-js';
 import { createStore, unwrap } from 'solid-js/store';
 import {
   BOARD_SIZE,
@@ -7,8 +7,18 @@ import {
   createEmptyBoard,
   checkWin,
   isBoardFull,
-  bestMove,
 } from '../game/engine';
+import { getBestMove } from '../game/api';
+
+function toApiStone(color: Stone): 1 | 2 {
+  return color === 'black' ? 1 : 2;
+}
+
+function toApiBoard(board: Board): (0 | 1 | 2)[][] {
+  return board.map((row) =>
+    row.map((cell) => (cell === 'black' ? 1 : cell === 'white' ? 2 : 0))
+  );
+}
 
 export default function Game() {
   const [board, setBoard] = createStore<Board>(createEmptyBoard());
@@ -16,6 +26,9 @@ export default function Game() {
   const [currentTurn, setCurrentTurn] = createSignal<Stone>('black');
   const [winner, setWinner] = createSignal<Stone | 'draw' | null>(null);
   const [thinking, setThinking] = createSignal(false);
+  const [aiError, setAiError] = createSignal<string | null>(null);
+
+  const [gameId, setGameId] = createSignal(0);
 
   function placeStone(row: number, col: number, color: Stone) {
     if (board[row][col] !== null || winner()) return;
@@ -38,33 +51,49 @@ export default function Game() {
     placeStone(row, col, me);
   }
 
-  // AI 턴 자동 진행
   createEffect(() => {
     const me = playerColor();
     const turn = currentTurn();
+    const myGameId = gameId();
+
     if (!me || winner() || turn === me) return;
 
     setThinking(true);
-    const timer = setTimeout(() => {
-      const move = bestMove(unwrap(board), turn, me);
-      if (move) placeStone(move.row, move.col, turn);
-      setThinking(false);
-    }, 450);
+    setAiError(null);
 
-    onCleanup(() => clearTimeout(timer));
+    getBestMove(toApiBoard(unwrap(board)), toApiStone(turn))
+      .then((result) => {
+        if (gameId() !== myGameId) return; // 그 사이 재시작/색상변경 됐으면 무시
+
+        if (result.noMove) {
+          setWinner('draw');
+          return;
+        }
+        placeStone(result.y, result.x, turn);
+      })
+      .catch((e) => {
+        if (gameId() !== myGameId) return;
+        setAiError(e instanceof Error ? e.message : '엔진 요청 실패');
+      })
+      .finally(() => {
+        if (gameId() !== myGameId) return;
+        setThinking(false);
+      });
   });
 
   function selectColor(color: Stone) {
     setPlayerColor(color);
-    setCurrentTurn('black'); // 오목은 항상 흑이 선
+    setCurrentTurn('black');
   }
 
   function restart() {
+    setGameId((id) => id + 1);
     setBoard(createEmptyBoard());
     setPlayerColor(null);
     setCurrentTurn('black');
     setWinner(null);
     setThinking(false);
+    setAiError(null);
   }
 
   return (
@@ -73,6 +102,9 @@ export default function Game() {
       <Show when={playerColor()} fallback={<ColorSelect onSelect={selectColor} />}>
         <div class="game__content">
           <TurnBar me={playerColor()!} turn={currentTurn()} thinking={thinking()} winner={winner()} />
+          <Show when={aiError()}>
+            <p class="ai-error">{aiError()}</p>
+          </Show>
           <BoardView board={board} onCellClick={handleCellClick} />
           <Show when={winner()}>
             <div class="result-banner">
