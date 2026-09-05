@@ -1,5 +1,6 @@
 from typing import Optional
 
+from seoah.audio.tts import load_model
 from seoah.config import setup_config
 from seoah.discord.bot import setup_discord_bot
 from seoah.llm.session import Session
@@ -11,6 +12,8 @@ async def _main(config_path: Optional[str] = None) -> None:
     setup_config(config_path)
 
     ses = Session()
+
+    await load_model()
 
     await setup_discord_bot()
 

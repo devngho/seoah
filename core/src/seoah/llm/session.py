@@ -7,7 +7,7 @@ from google.genai.types import ContentUnionDict, Content, Part
 from google.genai import types
 
 from seoah.config import ConfigFile, load_config
-from seoah.llm.client import get_client
+from seoah.llm.client import generate_content_stream
 from seoah.log import log
 
 
@@ -187,7 +187,7 @@ class Session:
                     keep_working = False
                     print(f"Preparing contents for Gemini model: {self.prepare_contents_gemini()}")
 
-                    response = await get_client().aio.models.generate_content_stream(
+                    response = generate_content_stream(
                         model=config.backend_model,
                         contents=self.prepare_contents_gemini(),
                         config=types.GenerateContentConfig(
@@ -223,8 +223,8 @@ class Session:
                     try:
                         async for chunk in response:
                             print(f"chunk: {chunk}")
-                            if chunk.usage_metadata is not None:
-                                log(lambda: f"Usage metadata: {chunk.usage_metadata}", "DEBUG")
+                            if not chunk.candidates:
+                                continue
 
                             res = chunk.candidates[0].content
 
@@ -283,5 +283,8 @@ class Session:
                             contents=[TextSessionPart(text=f"Error: {str(e)}", extra_fields={})],
                             is_in_progress=False
                         )
+
+                    finally:
+                        await response.aclose()
 
                     interaction.is_in_progress = False

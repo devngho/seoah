@@ -12,8 +12,11 @@ class ConfigFile(BaseModel):
     backend_model: str  = Field(default="gemini-3.8-flash")
     thinking_effort: ThinkingLevel = Field(default=ThinkingLevel.LOW)
     prompt: str = Field(default="You are a helpful assistant.")
+    audio_prompt: str = Field(default="female, korean accent, teenager, high pitch")
 
     debounce_ms: int = Field(default=2500, description="Debounce time in milliseconds for Discord bot responses.")
+
+    torch_device: str = Field(default="cpu", description="Torch device for model inference.")
 
 
 default_config = """api_key = "[put your api key here]"
