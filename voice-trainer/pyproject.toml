@@ -1,0 +1,33 @@
+[project]
+name = "voice_trainer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-genai>=2.22.0",
+    "pydantic>=2.13.5",
+    "numpy",
+    "soundfile",
+    "tqdm",
+    "torch>=2.14.0",
+]
+
+[project.optional-dependencies]
+omnivoice = ["omnivoice>=0.2.1"]
+
+[dependency-groups]
+qwen = ["qwen-tts>=0.1.1"]
+
+[tool.uv]
+default-groups = ["qwen"]
+conflicts = [[{ group = "qwen" }, { extra = "omnivoice" }]]
+
+[project.scripts]
+gen_corpus = "voice_trainer:gen_corpus"
+synthesize = "voice_trainer:synthesize"
+augment = "voice_trainer:augment"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"

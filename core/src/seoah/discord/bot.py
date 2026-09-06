@@ -4,11 +4,10 @@ from asyncio import Task
 from collections.abc import AsyncGenerator
 from contextlib import aclosing, closing
 from io import BytesIO
-from typing import cast
 
 import discord
 
-from seoah.audio.tts import convert_to_audio, convert_to_ogg
+from seoah.audio.tts import convert_text_to_ogg
 from seoah.config import load_config
 from seoah.llm.session import (
     FunctionCallSessionPart,
@@ -28,11 +27,18 @@ ses = Session()
 
 debounce_task_by_channel: dict[int, Task] = {}
 toggle_by_channel: dict[int, bool] = {}
+response_tasks: set[Task] = set()
+_shutting_down = False
 
 
 @client.event
 async def on_ready():
+    config = load_config()
+
     log(lambda: f"Logged in as {client.user}", "INFO")
+    await client.change_presence(
+        status=discord.Status.online, activity=discord.Game(name=config.backend_model)
+    )
 
 
 async def extract_output_from_interactions_discord(
@@ -84,6 +90,9 @@ async def extract_output_from_interactions_discord(
 
 @client.event
 async def on_message(message):
+    if _shutting_down:
+        return
+
     config = load_config()
 
     if message.author == client.user:
@@ -126,8 +135,7 @@ async def on_message(message):
             chunks = chunk_by(text_stream, [".", "\n", "\r", "!", "?"])
             striped_chunks = strip(chunks)
 
-            audio_stream = convert_to_audio(striped_chunks)
-            ogg_stream = convert_to_ogg(audio_stream)
+            ogg_stream = convert_text_to_ogg(striped_chunks)
 
             async def send_text(output: AsyncGenerator[str, None]):
                 async for chunk in stream_stdout_passthrough(output):
@@ -156,7 +164,6 @@ async def on_message(message):
                 aclosing(text_stream),
                 aclosing(chunks),
                 aclosing(striped_chunks),
-                aclosing(audio_stream),
                 aclosing(ogg_stream),
                 asyncio.TaskGroup() as group,
             ):
@@ -178,10 +185,14 @@ async def on_message(message):
     ses.add_user_input(f"{message.author} said: {message.content}")
 
     def report_failure(completed: Task):
+        response_tasks.discard(completed)
+        if debounce_task_by_channel.get(message.channel.id) is completed:
+            debounce_task_by_channel.pop(message.channel.id)
         if not completed.cancelled() and (error := completed.exception()) is not None:
             traceback.print_exception(error)
 
     response_task = asyncio.create_task(task())
+    response_tasks.add(response_task)
     response_task.add_done_callback(report_failure)
     debounce_task_by_channel[message.channel.id] = response_task
 
@@ -201,3 +212,19 @@ async def setup_discord_bot():
         return
 
     await client.start(config.discord_api_key)
+
+
+async def shutdown_discord_bot():
+    global _shutting_down
+    _shutting_down = True
+    tasks = tuple(response_tasks)
+    for task in tasks:
+        if not task.cancelling():
+            task.cancel()
+    try:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        response_tasks.clear()
+        debounce_task_by_channel.clear()
+
+        await client.close()
