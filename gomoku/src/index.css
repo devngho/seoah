@@ -259,3 +259,66 @@ body {
   margin: 0;
   color: var(--cream);
 }
+
+/* 대국 선택 버튼 3개 대응 */
+.color-select__options { flex-wrap: wrap; justify-content: center; }
+.color-select__pair { display: flex; gap: 4px; }
+.color-select__pair .stone { width: 20px; height: 20px; }
+
+/* 결과 배너 버튼 그룹 */
+.result-banner__actions { display: flex; gap: 0.8rem; }
+
+.home__start-btn--ghost {
+  background: transparent;
+  border: 1px solid rgba(201, 162, 75, 0.5);
+  box-shadow: none;
+}
+
+.home__start-btn--ghost:hover {
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* 엔진 에러 메시지 */
+.ai-error {
+  color: #e8a5a5;
+  font-size: 0.85rem;
+  letter-spacing: 0.03em;
+  margin: 0;
+}
+
+/* 마지막 착수 표시 */
+.stone--last {
+  box-shadow: 0 0 0 2px var(--brass), 0 2px 3px rgba(0, 0, 0, 0.6);
+}
+
+/* 복기 화면 */
+.replay-bar {
+  font-size: 0.9rem;
+  letter-spacing: 0.05em;
+  color: var(--cream-dim);
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.4rem 1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(201, 162, 75, 0.25);
+}
+
+.replay-controls {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.replay-btn {
+  font-family: 'Gowun Dodum', sans-serif;
+  font-size: 0.9rem;
+  padding: 0.5rem 1.1rem;
+  color: var(--cream);
+  background: linear-gradient(180deg, var(--wood-mid), var(--wood-dark));
+  border: 1px solid rgba(201, 162, 75, 0.35);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.replay-btn:hover:not(:disabled) { transform: translateY(-1px); }
+.replay-btn:disabled { opacity: 0.35; cursor: not-allowed; }

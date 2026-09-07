@@ -626,7 +626,7 @@ func handleBestMove(w http.ResponseWriter, r *http.Request) {
 	engine := NewEngine(cfg, depth)
 	y, x, score := engine.FindBestMove(board, Stone(req.Player))
 
-	fmt.Print(score, "\n")
+	//fmt.Print(score, "\n")
 
 	w.Header().Set("Content-Type", "application/json")
 

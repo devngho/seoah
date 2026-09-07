@@ -1,4 +1,4 @@
-import { createEffect, createSignal, Show, For } from 'solid-js';
+import { createEffect, createMemo, createSignal, Show, For } from 'solid-js';
 import { createStore, unwrap } from 'solid-js/store';
 import {
   BOARD_SIZE,
@@ -10,6 +10,9 @@ import {
 } from '../game/engine';
 import { getBestMove } from '../game/api';
 
+type Move = { row: number; col: number; color: Stone };
+type GameMode = 'black' | 'white' | 'ai-vs-ai' | null;
+
 function toApiStone(color: Stone): 1 | 2 {
   return color === 'black' ? 1 : 2;
 }
@@ -20,19 +23,30 @@ function toApiBoard(board: Board): (0 | 1 | 2)[][] {
   );
 }
 
+// 이 색의 턴을 엔진이 두어야 하는지 여부
+function isAiTurn(mode: GameMode, turn: Stone): boolean {
+  if (mode === 'ai-vs-ai') return true;
+  if (mode === 'black') return turn === 'white';
+  if (mode === 'white') return turn === 'black';
+  return false;
+}
+
 export default function Game() {
   const [board, setBoard] = createStore<Board>(createEmptyBoard());
-  const [playerColor, setPlayerColor] = createSignal<Stone>(null);
+  const [mode, setMode] = createSignal<GameMode>(null);
   const [currentTurn, setCurrentTurn] = createSignal<Stone>('black');
   const [winner, setWinner] = createSignal<Stone | 'draw' | null>(null);
   const [thinking, setThinking] = createSignal(false);
   const [aiError, setAiError] = createSignal<string | null>(null);
+  const [moveHistory, setMoveHistory] = createSignal<Move[]>([]);
+  const [isReviewing, setIsReviewing] = createSignal(false);
 
   const [gameId, setGameId] = createSignal(0);
 
   function placeStone(row: number, col: number, color: Stone) {
     if (board[row][col] !== null || winner()) return;
     setBoard(row, col, color);
+    setMoveHistory((h) => [...h, { row, col, color }]);
 
     if (checkWin(unwrap(board), row, col, color)) {
       setWinner(color);
@@ -46,24 +60,26 @@ export default function Game() {
   }
 
   function handleCellClick(row: number, col: number) {
-    const me = playerColor();
-    if (!me || winner() || currentTurn() !== me || thinking()) return;
-    placeStone(row, col, me);
+    const m = mode();
+    if (!m || m === 'ai-vs-ai' || winner() || thinking()) return;
+    if (currentTurn() !== m) return;
+    placeStone(row, col, m);
   }
 
+  // 엔진이 두어야 할 턴이면 자동으로 요청
   createEffect(() => {
-    const me = playerColor();
+    const m = mode();
     const turn = currentTurn();
     const myGameId = gameId();
 
-    if (!me || winner() || turn === me) return;
+    if (!m || winner() || !isAiTurn(m, turn)) return;
 
     setThinking(true);
     setAiError(null);
 
     getBestMove(toApiBoard(unwrap(board)), toApiStone(turn))
       .then((result) => {
-        if (gameId() !== myGameId) return; // 그 사이 재시작/색상변경 됐으면 무시
+        if (gameId() !== myGameId) return; // 그 사이 재시작/모드변경 됐으면 무시
 
         if (result.noMove) {
           setWinner('draw');
@@ -81,63 +97,87 @@ export default function Game() {
       });
   });
 
-  function selectColor(color: Stone) {
-    setPlayerColor(color);
+  function selectMode(m: GameMode) {
+    setMode(m);
     setCurrentTurn('black');
   }
 
   function restart() {
     setGameId((id) => id + 1);
     setBoard(createEmptyBoard());
-    setPlayerColor(null);
+    setMode(null);
     setCurrentTurn('black');
     setWinner(null);
     setThinking(false);
     setAiError(null);
+    setMoveHistory([]);
+    setIsReviewing(false);
   }
 
   return (
     <div class="game">
       <div class="home__board-overlay" />
-      <Show when={playerColor()} fallback={<ColorSelect onSelect={selectColor} />}>
-        <div class="game__content">
-          <TurnBar me={playerColor()!} turn={currentTurn()} thinking={thinking()} winner={winner()} />
-          <Show when={aiError()}>
-            <p class="ai-error">{aiError()}</p>
-          </Show>
-          <BoardView board={board} onCellClick={handleCellClick} />
-          <Show when={winner()}>
-            <div class="result-banner">
-              <p class="result-banner__text">
-                {winner() === 'draw'
-                  ? '무승부입니다'
-                  : winner() === playerColor()
-                  ? '승리했습니다'
-                  : '패배했습니다'}
-              </p>
-              <button class="home__start-btn" onClick={restart}>
-                다시 하기
-              </button>
-            </div>
-          </Show>
-        </div>
+      <Show when={mode()} fallback={<ModeSelect onSelect={selectMode} />}>
+        <Show
+          when={!isReviewing()}
+          fallback={<ReplayView history={moveHistory()} onExit={() => setIsReviewing(false)} />}
+        >
+          <div class="game__content">
+            <TurnBar mode={mode()} turn={currentTurn()} thinking={thinking()} winner={winner()} />
+            <Show when={aiError()}>
+              <p class="ai-error">{aiError()}</p>
+            </Show>
+            <BoardView board={board} onCellClick={handleCellClick} />
+            <Show when={winner()}>
+              <div class="result-banner">
+                <p class="result-banner__text">
+                  {winner() === 'draw'
+                    ? '무승부입니다'
+                    : mode() === 'ai-vs-ai'
+                    ? `${winner() === 'black' ? '흑' : '백'} 엔진이 승리했습니다`
+                    : winner() === mode()
+                    ? '승리했습니다'
+                    : '패배했습니다'}
+                </p>
+                <div class="result-banner__actions">
+                  <button class="home__start-btn" onClick={restart}>
+                    다시 하기
+                  </button>
+                  <button
+                    class="home__start-btn home__start-btn--ghost"
+                    onClick={() => setIsReviewing(true)}
+                  >
+                    복기하기
+                  </button>
+                </div>
+              </div>
+            </Show>
+          </div>
+        </Show>
       </Show>
     </div>
   );
 }
 
-function ColorSelect(props: { onSelect: (c: Stone) => void }) {
+function ModeSelect(props: { onSelect: (m: GameMode) => void }) {
   return (
     <div class="color-select">
-      <h2 class="color-select__title">돌 색을 선택하세요</h2>
+      <h2 class="color-select__title">대국 방식을 선택하세요</h2>
       <div class="color-select__options">
         <button class="color-select__btn" onClick={() => props.onSelect('black')}>
           <span class="stone stone--black" />
-          흑돌
+          흑돌로 두기
         </button>
         <button class="color-select__btn" onClick={() => props.onSelect('white')}>
           <span class="stone stone--white" />
-          백돌
+          백돌로 두기
+        </button>
+        <button class="color-select__btn" onClick={() => props.onSelect('ai-vs-ai')}>
+          <span class="color-select__pair">
+            <span class="stone stone--black" />
+            <span class="stone stone--white" />
+          </span>
+          엔진끼리 대국 관전
         </button>
       </div>
       <p class="color-select__hint">흑돌이 먼저 둡니다</p>
@@ -145,10 +185,15 @@ function ColorSelect(props: { onSelect: (c: Stone) => void }) {
   );
 }
 
-function TurnBar(props: { me: Stone; turn: Stone; thinking: boolean; winner: Stone | 'draw' | null }) {
+function TurnBar(props: { mode: GameMode; turn: Stone; thinking: boolean; winner: Stone | 'draw' | null }) {
   const label = () => {
     if (props.winner) return '대국 종료';
-    if (props.turn === props.me) return '당신의 차례입니다';
+    if (props.mode === 'ai-vs-ai') {
+      const colorLabel = props.turn === 'black' ? '흑' : '백';
+      return props.thinking ? `${colorLabel} 엔진이 생각 중입니다...` : `${colorLabel} 엔진 차례입니다`;
+    }
+    const isMyTurn = props.turn === props.mode;
+    if (isMyTurn) return '당신의 차례입니다';
     return props.thinking ? '상대가 생각 중입니다...' : '상대의 차례입니다';
   };
   return (
@@ -159,9 +204,14 @@ function TurnBar(props: { me: Stone; turn: Stone; thinking: boolean; winner: Sto
   );
 }
 
-function BoardView(props: { board: Board; onCellClick: (row: number, col: number) => void }) {
+function BoardView(props: {
+  board: Board;
+  onCellClick: (row: number, col: number) => void;
+  lastMove?: { row: number; col: number } | null;
+}) {
   const starPoints = [3, 7, 11];
   const isStar = (r: number, c: number) => starPoints.includes(r) && starPoints.includes(c);
+  const isLast = (r: number, c: number) => props.lastMove?.row === r && props.lastMove?.col === c;
 
   return (
     <div class="board">
@@ -181,13 +231,64 @@ function BoardView(props: { board: Board; onCellClick: (row: number, col: number
                   <span class="board__star" />
                 </Show>
                 <Show when={cell}>
-                  <span class={`stone stone--${cell}`} />
+                  <span
+                    class={`stone stone--${cell}`}
+                    classList={{ 'stone--last': isLast(r(), c()) }}
+                  />
                 </Show>
               </button>
             )}
           </For>
         )}
       </For>
+    </div>
+  );
+}
+
+function ReplayView(props: { history: Move[]; onExit: () => void }) {
+  const [step, setStep] = createSignal(props.history.length);
+
+  const board = createMemo<Board>(() => {
+    const b = createEmptyBoard();
+    for (let i = 0; i < step(); i++) {
+      const m = props.history[i];
+      b[m.row][m.col] = m.color;
+    }
+    return b;
+  });
+
+  const lastMove = () => (step() > 0 ? props.history[step() - 1] : null);
+
+  const goFirst = () => setStep(0);
+  const goPrev = () => setStep((s) => Math.max(0, s - 1));
+  const goNext = () => setStep((s) => Math.min(props.history.length, s + 1));
+  const goLast = () => setStep(props.history.length);
+
+  return (
+    <div class="game__content">
+      <div class="replay-bar">
+        <span>
+          복기 · {step()} / {props.history.length}수
+        </span>
+      </div>
+      <BoardView board={board()} onCellClick={() => {}} lastMove={lastMove()} />
+      <div class="replay-controls">
+        <button class="replay-btn" onClick={goFirst} disabled={step() === 0}>
+          처음
+        </button>
+        <button class="replay-btn" onClick={goPrev} disabled={step() === 0}>
+          이전
+        </button>
+        <button class="replay-btn" onClick={goNext} disabled={step() === props.history.length}>
+          다음
+        </button>
+        <button class="replay-btn" onClick={goLast} disabled={step() === props.history.length}>
+          마지막
+        </button>
+      </div>
+      <button class="home__start-btn home__start-btn--ghost" onClick={props.onExit}>
+        복기 종료
+      </button>
     </div>
   );
 }
