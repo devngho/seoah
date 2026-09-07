@@ -66,16 +66,17 @@ class CosyVoiceCppProvider:
 
     def _command(self, config: ConfigFile, port: int, token: str) -> list[str]:
         repo = Path(config.cosyvoice_cpp_repo).expanduser().resolve()
+        pwd = Path.cwd().resolve()
 
-        def resolve(value: str, directory: bool = False) -> str:
+        def resolve(parent: Path, value: str, directory: bool = False) -> str:
             path = Path(value).expanduser()
-            path = path if path.is_absolute() else repo / path
+            path = path if path.is_absolute() else parent / path
             if not (path.is_dir() if directory else path.is_file()):
                 raise FileNotFoundError(f"CosyVoice.cpp path not found: {path}")
             return str(path)
 
         return [
-            resolve(config.cosyvoice_cpp_binary),
+            resolve(repo, config.cosyvoice_cpp_binary),
             "--api",
             "--host",
             "127.0.0.1",
@@ -84,15 +85,15 @@ class CosyVoiceCppProvider:
             "--api-key",
             token,
             "--model",
-            resolve(config.cosyvoice_cpp_model),
+            resolve(pwd, config.cosyvoice_cpp_model),
             "--voice-prompt",
-            f"{config.cosyvoice_cpp_voice}={resolve(config.cosyvoice_cpp_prompt)}",
+            f"{config.cosyvoice_cpp_voice}={resolve(pwd, config.cosyvoice_cpp_prompt)}",
             "--served-model-name",
             config.cosyvoice_cpp_model_name,
             "--backend",
             config.cosyvoice_cpp_backend,
             "--backend-path",
-            resolve(config.cosyvoice_cpp_backend_path, directory=True),
+            resolve(repo, config.cosyvoice_cpp_backend_path, directory=True),
             "--threads",
             str(config.cosyvoice_cpp_threads),
             "--llm-kv-cache-type",

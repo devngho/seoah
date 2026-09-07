@@ -31,11 +31,11 @@ class ConfigFile(BaseModel):
     cosyvoice_cpp_url: HttpUrl | None = None
     cosyvoice_cpp_api_key: SecretStr | None = None
     cosyvoice_cpp_repo: str = "~/다운로드/cosyvoice.cpp"
-    cosyvoice_cpp_binary: str = "build-vulkan/bin/cosyvoice-server"
-    cosyvoice_cpp_backend_path: str = "build-vulkan/lib"
+    cosyvoice_cpp_binary: str = "build/bin/cosyvoice-server"
+    cosyvoice_cpp_backend_path: str = "build/lib"
     cosyvoice_cpp_backend: str = "Vulkan0"
-    cosyvoice_cpp_model: str = "experiments/audio_clone6-v3/model-q8.gguf"
-    cosyvoice_cpp_prompt: str = "experiments/audio_clone6-v3/prompt.gguf"
+    cosyvoice_cpp_model: str = "../models/model-q8.gguf"
+    cosyvoice_cpp_prompt: str = "../models/prompt.gguf"
     cosyvoice_cpp_model_name: str = "seoah-v3"
     cosyvoice_cpp_voice: str = "seoah"
     cosyvoice_cpp_threads: int = Field(default=16, ge=1)

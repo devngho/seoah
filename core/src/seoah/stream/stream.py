@@ -1,26 +1,7 @@
 from collections.abc import AsyncGenerator
-from typing import cast
+from typing import cast, Dict
 
 from seoah.llm.session import Interaction, TextSessionPart
-
-
-async def replace(
-        generator: AsyncGenerator[str, None], to_remove: list[str], to_replace: str
-):
-    """
-    Asynchronously yields text from the provided generator, replacing specified substrings with a new string.
-
-    :param generator: An asynchronous generator that yields strings.
-    :param to_remove: A list of strings to replace.
-    :param to_replace: The string to replace the specified substrings with.
-    :yield: Text with specified substrings removed.
-    """
-
-    async for chunk in generator:
-        for remove_str in to_remove:
-            chunk = chunk.replace(remove_str, to_replace)
-        yield chunk
-
 
 async def chunk_by(generator: AsyncGenerator[str, None], to_split: list[str]):
     """
@@ -96,3 +77,34 @@ async def extract_output_from_interactions(
                     last_len = len(text_part.text)
             else:
                 last_len = 0
+
+
+async def replace(generator: AsyncGenerator[str, None], mapping: Dict[str, str]) -> AsyncGenerator[str, None]:
+    """
+    Asynchronously yields text from the provided generator, replacing specified substrings based on a mapping.
+
+    :param generator: An asynchronous generator that yields strings.
+    :param mapping: A dictionary where keys are substrings to be replaced and values are their replacements.
+    :yield: Text with specified substrings replaced according to the mapping.
+    """
+
+    async for chunk in generator:
+        for old, new in mapping.items():
+            chunk = chunk.replace(old, new)
+
+        yield chunk
+
+
+async def join(generator: AsyncGenerator[str, None]) -> AsyncGenerator[str, None]:
+    """
+    Asynchronously joins text from the provided generator into a single string.
+
+    :param generator: An asynchronous generator that yields strings.
+    :yield: A single concatenated string of all text parts.
+    """
+
+    buf = ""
+    async for chunk in generator:
+        buf += chunk
+
+    yield buf

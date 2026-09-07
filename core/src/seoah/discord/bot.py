@@ -132,10 +132,11 @@ async def on_message(message):
                 stream
             )
 
-            chunks = chunk_by(text_stream, [".", "\n", "\r", "!", "?"])
-            striped_chunks = strip(chunks)
+            text_streams = [text_stream]
+            text_streams.append(chunk_by(text_streams[-1], [".", "\n", "\r", "!", "?"]))
+            text_streams.append(strip(text_streams[-1]))
 
-            ogg_stream = convert_text_to_ogg(striped_chunks)
+            ogg_stream = convert_text_to_ogg(text_streams[-1])
 
             async def send_text(output: AsyncGenerator[str, None]):
                 async for chunk in stream_stdout_passthrough(output):
@@ -162,8 +163,7 @@ async def on_message(message):
                 aclosing(stream),
                 aclosing(meta_stream),
                 aclosing(text_stream),
-                aclosing(chunks),
-                aclosing(striped_chunks),
+                aclosing(text_streams[-1]),
                 aclosing(ogg_stream),
                 asyncio.TaskGroup() as group,
             ):
