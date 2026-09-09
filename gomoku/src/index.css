@@ -8,6 +8,12 @@
   --wood-highlight: #c08d54;
   --cream: #f3e6cc;
   --cream-dim: #d8c6a3;
+  --page-bg: #6b4f3a;
+  --surface: #806248;
+  --surface-raised: #927254;
+  --surface-muted: rgba(0, 0, 0, 0.2);
+  --border: rgba(255, 235, 205, 0.28);
+  --shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
   --stone-black: #181818;
   --stone-white: #f5f0e6;
   --brass: #c9a24b;
@@ -21,6 +27,26 @@ html, body { margin: 0; padding: 0; height: 100%; }
 body {
   font-family: 'Gowun Dodum', sans-serif;
   color: var(--cream);
+  background: var(--page-bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --wood-dark: #171a1d;
+    --wood-base: #20262b;
+    --wood-mid: #2b333a;
+    --wood-light: #37434b;
+    --wood-highlight: #8C8C8C;
+    --cream: #f1f4f6;
+    --cream-dim: #b8c1c8;
+    --page-bg: #171a1d;
+    --surface: #252c32;
+    --surface-raised: #303a42;
+    --surface-muted: rgba(0, 0, 0, 0.28);
+    --border: rgba(255, 255, 255, 0.15);
+    --shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+    --board-line: rgba(0, 0, 0, 0.42);
+  }
 }
 
 .home,
@@ -34,34 +60,8 @@ body {
   justify-content: center;
   overflow: hidden;
   padding: 2rem 1rem;
-  background:
-    repeating-linear-gradient(90deg, rgba(0,0,0,0.06) 0px, rgba(0,0,0,0.06) 1px, transparent 1px, transparent 7px),
-    repeating-linear-gradient(100deg, rgba(255,220,170,0.05) 0px, transparent 2px, transparent 40px, rgba(255,220,170,0.04) 42px, transparent 90px),
-    linear-gradient(160deg, var(--wood-light) 0%, var(--wood-base) 45%, var(--wood-dark) 100%);
+  background: var(--page-bg);
 }
-
-.home__board-overlay {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(20,10,2,0.35) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(20,10,2,0.35) 1px, transparent 1px);
-  background-size: 64px 64px;
-  background-position: center;
-  mask-image: radial-gradient(ellipse at center, black 35%, transparent 78%);
-  -webkit-mask-image: radial-gradient(ellipse at center, black 35%, transparent 78%);
-  pointer-events: none;
-}
-
-.home::after,
-.game::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  box-shadow: inset 0 0 160px 40px rgba(0, 0, 0, 0.55);
-  pointer-events: none;
-}
-
 .home__content {
   position: relative;
   z-index: 1;
@@ -78,7 +78,6 @@ body {
   letter-spacing: 0.15em;
   margin: 0;
   color: var(--cream);
-  text-shadow: 0 1px 0 rgba(255,235,200,0.15), 0 3px 10px rgba(0,0,0,0.55);
 }
 
 .home__subtitle {
@@ -94,27 +93,21 @@ body {
   letter-spacing: 0.2em;
   padding: 0.85rem 3rem;
   color: var(--cream);
-  background: linear-gradient(180deg, var(--wood-mid), var(--wood-dark));
-  border: 1px solid rgba(201, 162, 75, 0.5);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 220, 170, 0.25),
-    inset 0 -3px 6px rgba(0, 0, 0, 0.45),
-    0 6px 14px rgba(0, 0, 0, 0.4);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: var(--shadow);
+  transition: transform 0.15s ease, background 0.15s ease;
 }
 
 .home__start-btn:hover {
   transform: translateY(-2px);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 220, 170, 0.3),
-    inset 0 -3px 6px rgba(0, 0, 0, 0.45),
-    0 10px 18px rgba(0, 0, 0, 0.45);
+  background: var(--surface-raised);
   border-color: var(--brass);
 }
 
-.home__start-btn:active { transform: translateY(0); box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.5); }
+.home__start-btn:active { transform: translateY(0); }
 .home__start-btn:focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; }
 
 /* 돌 (공용) */
@@ -122,12 +115,12 @@ body {
 
 .stone--black {
   background: radial-gradient(circle at 35% 30%, #4a4a4a, var(--stone-black) 70%);
-  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
 .stone--white {
   background: radial-gradient(circle at 35% 30%, #ffffff, var(--stone-white) 75%);
-  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
 .home__stones { display: flex; gap: 0.5rem; margin-bottom: 0.4rem; }
@@ -162,11 +155,11 @@ body {
   font-family: 'Gowun Dodum', sans-serif;
   font-size: 1.05rem;
   color: var(--cream);
-  background: linear-gradient(180deg, var(--wood-mid), var(--wood-dark));
-  border: 1px solid rgba(201, 162, 75, 0.4);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255, 220, 170, 0.2), 0 6px 14px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow);
   transition: transform 0.15s ease, border-color 0.15s ease;
 }
 
@@ -193,7 +186,7 @@ body {
   font-size: 0.95rem;
   letter-spacing: 0.05em;
   color: var(--cream-dim);
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--surface-muted);
   padding: 0.5rem 1.1rem;
   border-radius: 999px;
   border: 1px solid rgba(201, 162, 75, 0.25);
@@ -205,9 +198,9 @@ body {
   position: relative;
   width: min(90vw, 600px);
   aspect-ratio: 1;
-  background: linear-gradient(160deg, var(--wood-highlight), var(--wood-mid));
+  background: var(--wood-highlight);
   border-radius: 6px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), inset 0 0 0 2px rgba(201, 162, 75, 0.35);
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--border);
   background-image:
     linear-gradient(var(--board-line) 1px, transparent 1px),
     linear-gradient(90deg, var(--board-line) 1px, transparent 1px);
@@ -247,7 +240,7 @@ body {
   align-items: center;
   gap: 1rem;
   padding: 1.4rem 2rem;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--surface-muted);
   border: 1px solid rgba(201, 162, 75, 0.4);
   border-radius: 10px;
 }
@@ -313,11 +306,12 @@ body {
   font-size: 0.9rem;
   padding: 0.5rem 1.1rem;
   color: var(--cream);
-  background: linear-gradient(180deg, var(--wood-mid), var(--wood-dark));
-  border: 1px solid rgba(201, 162, 75, 0.35);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  box-shadow: var(--shadow);
+  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
 }
 
 .replay-btn:hover:not(:disabled) { transform: translateY(-1px); }
