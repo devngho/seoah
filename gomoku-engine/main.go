@@ -93,8 +93,6 @@ func NoRenjuConfig() RenjuConfig {
 func evaluateLinesAt(b *Board, y, x int) int {
 	var blackScore, whiteScore int
 	for _, d := range directions {
-		// (y,x)가 포함된 연속된 돌의 양 끝점을 찾고 openStart/openEnd를 판별
-		// (기존 evaluateDirectionBoth 로직을 (y,x) 중심으로 국소화)
 		length, openStart, openEnd, stone := scanLineSegment(b, y, x, d[0], d[1])
 		if stone == Empty {
 			continue
@@ -119,7 +117,6 @@ func scanLineSegment(b *Board, y, x, dx, dy int) (int, bool, bool, Stone) {
 	}
 
 	length := 1
-	// 정방향 탐색
 	cy, cx := y+dy, x+dx
 	for inBounds(cy, cx) && b.Get(cy, cx) == s {
 		length++
@@ -128,7 +125,6 @@ func scanLineSegment(b *Board, y, x, dx, dy int) (int, bool, bool, Stone) {
 	}
 	openEnd := inBounds(cy, cx) && b.Get(cy, cx) == Empty
 
-	// 역방향 탐색
 	py, px := y-dy, x-dx
 	for inBounds(py, px) && b.Get(py, px) == s {
 		length++
@@ -182,11 +178,6 @@ func CheckWinAt(b *Board, y, x int, stone Stone) bool {
 
 // lineWindow: 렌주 금수 판정용 9칸(radius=4 고정) 윈도우.
 // 'S' = 해당 stone, '_' = 빈칸, 'o' = 상대 돌 또는 보드 밖(막힘)
-//
-// 성능 노트: 예전 lineToString은 strings.Builder로 매번 힙에 문자열을
-// 새로 할당했다. IsForbidden은 Black 착수 후보마다(렌주룰 활성화 시)
-// 4방향씩 이 함수를 호출하므로 탐색 중 GC 압박이 컸다. 크기가 고정(9)이므로
-// 스택에 올라가는 배열로 바꿔 할당을 없앤다.
 const lineWindowRadius = 4
 const lineWindowSize = lineWindowRadius*2 + 1 // 9
 
@@ -212,17 +203,32 @@ func lineWindow(b *Board, y, x, dx, dy int, stone Stone) [lineWindowSize]byte {
 }
 
 // countOpenThrees: (y,x)에 stone을 놓았을 때 만들어지는 "열린 3" 개수.
-// 간이 판정: 9칸 윈도우 안에 "_SSS_" 패턴이 있으면 열린 3으로 간주.
-// (완전한 렌주룰의 "살아있는 3" 판정보다는 단순화된 근사치입니다)
 func countOpenThrees(b *Board, y, x int, stone Stone) int {
 	count := 0
 	for _, d := range directions {
 		win := lineWindow(b, y, x, d[0], d[1], stone)
+
+		found := false
 		for i := 0; i+5 <= lineWindowSize; i++ {
 			if win[i] == '_' && win[i+1] == 'S' && win[i+2] == 'S' && win[i+3] == 'S' && win[i+4] == '_' {
-				count++
+				found = true
 				break
 			}
+		}
+		if !found {
+			for i := 0; i+6 <= lineWindowSize; i++ {
+				if win[i] == '_' && win[i+1] == 'S' && win[i+2] == 'S' && win[i+3] == '_' && win[i+4] == 'S' && win[i+5] == '_' {
+					found = true
+					break
+				}
+				if win[i] == '_' && win[i+1] == 'S' && win[i+2] == '_' && win[i+3] == 'S' && win[i+4] == 'S' && win[i+5] == '_' {
+					found = true
+					break
+				}
+			}
+		}
+		if found {
+			count++
 		}
 	}
 	return count
@@ -520,9 +526,6 @@ func (e *Engine) FindBestMove(b *Board, player Stone) (int, int, int) {
 	bestY, bestX := -1, -1
 	bestScore := negInf
 
-	// 매 FindBestMove 호출(=매 API 요청)은 서로 다른 국면일 수 있으므로,
-	// 이전 호출에서 남은 PV 수를 그대로 들고 가면 안 된다. depth=1 탐색
-	// 전에는 PV 수가 없는 상태로 시작한다.
 	e.hasPV = false
 
 	for depth := 1; depth <= e.MaxDepth; depth++ {
@@ -534,47 +537,13 @@ func (e *Engine) FindBestMove(b *Board, player Stone) (int, int, int) {
 			e.hasPV = true
 		}
 		if bestScore >= winScore {
-			break // 이미 강제 승리를 찾았으면 더 깊이 볼 필요 없음
+			break
 		}
 	}
 
 	end := time.Since(start)
 	fmt.Println(end)
 	return bestY, bestX, bestScore
-}
-
-func (e *Engine) searchRoot(b *Board, player Stone, depth int) (int, int, int) {
-	moves := e.GenerateMoves(b, depth)
-	moves = e.orderMoves(b, moves, player, depth, true)
-
-	bestY, bestX := -1, -1
-	best := negInf
-	alpha, beta := negInf, posInf
-
-	for _, m := range moves {
-		y, x := m[0], m[1]
-		if e.isIllegal(b, y, x, player) {
-			continue
-		}
-
-		b.Set(y, x, player)
-		var score int
-		if CheckWinAt(b, y, x, player) {
-			score = winScore
-		} else {
-			score = -e.alphabeta(b, depth-1, -beta, -alpha, opponent(player), score)
-		}
-		b.Set(y, x, Empty)
-
-		if score > best {
-			best = score
-			bestY, bestX = y, x
-		}
-		if score > alpha {
-			alpha = score
-		}
-	}
-	return bestY, bestX, best
 }
 
 // searchRootParallel: searchRoot과 같은 결과를 내지만, 루트의 각 후보 수를
