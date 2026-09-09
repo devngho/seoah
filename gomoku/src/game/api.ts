@@ -13,7 +13,7 @@ export async function getBestMove(
   board: Board,
   player: 1 | 2
 ): Promise<BestMoveResponse> {
-  const res = await fetch("http://localhost:8090/api/best-move", {
+  const res = await fetch(`${location.origin}/api/best-move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ board, player }),
