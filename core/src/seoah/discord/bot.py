@@ -4,6 +4,7 @@ from asyncio import Task
 from collections.abc import AsyncGenerator
 from contextlib import aclosing, closing
 from io import BytesIO
+from typing import Tuple
 
 import discord
 
@@ -23,10 +24,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 client: discord.Client = discord.Client(intents=intents)
-ses = Session()
 
 debounce_task_by_channel: dict[int, Task] = {}
 toggle_by_channel: dict[int, bool] = {}
+session_by_channel: dict[int, Session] = {}
 response_tasks: set[Task] = set()
 _shutting_down = False
 
@@ -118,8 +119,42 @@ async def on_message(message):
         toggle_by_channel[message.channel.id] = True
         return
 
+    if message.content.startswith("[seoah force_speak]"):
+        log(
+            lambda: (
+                f"Force speaking in channel {message.channel.name} ({message.channel.id})"
+            ),
+            "INFO",
+        )
+
+        # create audio of the message content after the command
+        content_to_speak = message.content[len("[seoah force_speak]"):].strip()
+
+        async def force_speak_stream(): yield content_to_speak
+
+        ogg_stream = convert_text_to_ogg(force_speak_stream())
+
+        async for (text, chunk) in ogg_stream:
+            if not chunk:
+                continue
+            print(f"Sending audio chunk to Discord: {len(chunk)} bytes")
+            with (
+                BytesIO(chunk) as buffer,
+                closing(discord.File(buffer, filename="output.ogg")) as file,
+            ):
+                await message.channel.send(f'`force reading:` {text}', file=file)
+
+            await asyncio.sleep(0.5)  # slight delay
+
+        return
+
     if not toggle_by_channel.get(message.channel.id, True):
         return
+
+    if message.channel.id not in session_by_channel:
+        session_by_channel[message.channel.id] = Session()
+
+    ses = session_by_channel[message.channel.id]
 
     async def task():
         await asyncio.sleep(config.debounce_ms / 1000)
@@ -146,8 +181,8 @@ async def on_message(message):
                     await message.channel.send(chunk)
                     await asyncio.sleep(0.5)  # slight delay
 
-            async def send_audio(output: AsyncGenerator[bytes, None]):
-                async for chunk in output:
+            async def send_audio(output: AsyncGenerator[Tuple[str, bytes], None]):
+                async for text, chunk in output:
                     if not chunk:
                         continue
                     print(f"Sending audio chunk to Discord: {len(chunk)} bytes")
@@ -155,7 +190,7 @@ async def on_message(message):
                         BytesIO(chunk) as buffer,
                         closing(discord.File(buffer, filename="output.ogg")) as file,
                     ):
-                        await message.channel.send(file=file)
+                        await message.channel.send(text, file=file)
 
                     await asyncio.sleep(0.5)  # slight delay
 

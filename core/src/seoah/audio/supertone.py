@@ -1,5 +1,5 @@
 from io import BytesIO
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Tuple
 
 import numpy as np
 from supertonic import TTS
@@ -21,21 +21,21 @@ async def generate_supertone_tts(text: str) -> np.ndarray:
 
 async def convert_to_audio(
         generator: AsyncGenerator[str, None],
-) -> AsyncGenerator[np.ndarray, None]:
+) -> AsyncGenerator[Tuple[str, np.ndarray], None]:
     """Convert text chunks to audio chunks, yielding numpy arrays in input order."""
     async for text_chunk in generator:
         audio_chunk = await generate_supertone_tts(text_chunk)
-        yield audio_chunk.reshape(-1, 1)  # (1, n) -> (n, 1)
+        yield text_chunk, audio_chunk.reshape(-1, 1)  # (1, n) -> (n, 1)
 
 
 async def convert_to_ogg(
-        generator: AsyncGenerator[np.ndarray, None],
-) -> AsyncGenerator[bytes, None]:
+        generator: AsyncGenerator[Tuple[str, np.ndarray], None],
+) -> AsyncGenerator[Tuple[str, bytes], None]:
     """Convert audio chunks to OGG format, yielding bytes in input order."""
-    async for audio_chunk in generator:
+    async for text_chunk, audio_chunk in generator:
         # Convert to OGG format using soundfile and bytesio
         with BytesIO() as buffer:
             sf.write(
                 buffer, audio_chunk, samplerate=44100, format="OGG", subtype="VORBIS"
             )
-            yield buffer.getvalue()
+            yield text_chunk, buffer.getvalue()

@@ -2,13 +2,14 @@
 
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
+from typing import Tuple
 
 from seoah.config import load_config
 
 
 async def convert_text_to_ogg(
     generator: AsyncGenerator[str],
-) -> AsyncGenerator[bytes]:
+) -> AsyncGenerator[Tuple[str, bytes]]:
     backend = load_config().tts_backend
     if backend in {"cosyvoice_cpp", "cosyvoice"}:
         if backend == "cosyvoice_cpp":
@@ -18,7 +19,7 @@ async def convert_text_to_ogg(
 
         async for text in generator:
             if text.strip():
-                yield await generate(text)
+                yield text, await generate(text)
         return
 
     if backend == "supertone":

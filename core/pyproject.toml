@@ -17,6 +17,7 @@ dependencies = [
     "soundfile>=0.14.0",
     "torch>=2.14.0",
     "torchaudio>=2.11.0",
+    "aiostream>=0.7.1",
 ]
 
 # The standalone worker runs under CosyVoice's Python 3.10, not core's 3.14.

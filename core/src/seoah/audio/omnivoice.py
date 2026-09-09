@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from io import BytesIO
-from typing import cast
+from typing import cast, Tuple
 
 import numpy as np
 import soundfile as sf
@@ -47,22 +47,22 @@ async def generate_tts(text: str) -> list[np.ndarray]:
 
 async def convert_to_audio(
         generator: AsyncGenerator[str, None],
-) -> AsyncGenerator[np.ndarray, None]:
+) -> AsyncGenerator[Tuple[str, np.ndarray], None]:
     """Convert text chunks to audio chunks, yielding numpy arrays in input order."""
     async for text_chunk in generator:
         audio_chunks = await generate_tts(text_chunk)
         for audio_chunk in audio_chunks:
-            yield audio_chunk
+            yield text_chunk, audio_chunk
 
 
 async def convert_to_ogg(
-        generator: AsyncGenerator[np.ndarray, None],
-) -> AsyncGenerator[bytes, None]:
+        generator: AsyncGenerator[Tuple[str, np.ndarray], None],
+) -> AsyncGenerator[Tuple[str, bytes], None]:
     """Convert audio chunks to OGG format, yielding bytes in input order."""
-    async for audio_chunk in generator:
+    async for text_chunk, audio_chunk in generator:
         # Convert to OGG format using soundfile and bytesio
         with BytesIO() as buffer:
             sf.write(
                 buffer, audio_chunk, samplerate=24000, format="OGG", subtype="VORBIS"
             )
-            yield buffer.getvalue()
+            yield text_chunk, buffer.getvalue()
