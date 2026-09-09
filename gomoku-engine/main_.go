@@ -1,4 +1,4 @@
-package main
+/*package main
 
 import (
 	"encoding/json"
@@ -88,57 +88,6 @@ func NoRenjuConfig() RenjuConfig {
 // ============================================================
 // 라인 분석 유틸
 // ============================================================
-
-// evaluateLinesAt: (y, x) 좌표를 십자 및 대각선으로 교차하는 4방향 라인의 점수 합산
-func evaluateLinesAt(b *Board, y, x int) int {
-	var blackScore, whiteScore int
-	for _, d := range directions {
-		// (y,x)가 포함된 연속된 돌의 양 끝점을 찾고 openStart/openEnd를 판별
-		// (기존 evaluateDirectionBoth 로직을 (y,x) 중심으로 국소화)
-		length, openStart, openEnd, stone := scanLineSegment(b, y, x, d[0], d[1])
-		if stone == Empty {
-			continue
-		}
-
-		score := patternScore(length, openStart, openEnd)
-		if stone == Black {
-			blackScore += score
-		} else {
-			whiteScore += score
-		}
-	}
-	// 항상 흑(Black) 기준으로 점수를 반환 (백의 이득은 마이너스)
-	return blackScore - whiteScore
-}
-
-// scanLineSegment: 주어진 방향에서 (y,x)를 포함하는 연속된 돌의 정보를 추출
-func scanLineSegment(b *Board, y, x, dx, dy int) (int, bool, bool, Stone) {
-	s := b.Get(y, x)
-	if s == Empty {
-		return 0, false, false, Empty
-	}
-
-	length := 1
-	// 정방향 탐색
-	cy, cx := y+dy, x+dx
-	for inBounds(cy, cx) && b.Get(cy, cx) == s {
-		length++
-		cy += dy
-		cx += dx
-	}
-	openEnd := inBounds(cy, cx) && b.Get(cy, cx) == Empty
-
-	// 역방향 탐색
-	py, px := y-dy, x-dx
-	for inBounds(py, px) && b.Get(py, px) == s {
-		length++
-		py -= dy
-		px -= dx
-	}
-	openStart := inBounds(py, px) && b.Get(py, px) == Empty
-
-	return length, openStart, openEnd, s
-}
 
 // runLength: (y,x)에 stone이 이미 놓여있다고 가정하고, (dx,dy) 방향 양쪽으로
 // 이어지는 연속된 길이를 반환합니다.
@@ -562,7 +511,7 @@ func (e *Engine) searchRoot(b *Board, player Stone, depth int) (int, int, int) {
 		if CheckWinAt(b, y, x, player) {
 			score = winScore
 		} else {
-			score = -e.alphabeta(b, depth-1, -beta, -alpha, opponent(player), score)
+			score = -e.alphabeta(b, depth-1, -beta, -alpha, opponent(player))
 		}
 		b.Set(y, x, Empty)
 
@@ -657,7 +606,7 @@ func (e *Engine) searchRootParallel(b *Board, player Stone, depth int) (int, int
 					score = winScore
 				} else {
 					alpha := int(atomic.LoadInt64(&sharedAlpha))
-					score = -workerEngine.alphabeta(&boardCopy, depth-1, negInf, -alpha, opponent(player), score)
+					score = -workerEngine.alphabeta(&boardCopy, depth-1, negInf, -alpha, opponent(player))
 				}
 
 				results <- moveResult{y, x, score}
@@ -691,12 +640,9 @@ func (e *Engine) searchRootParallel(b *Board, player Stone, depth int) (int, int
 }
 
 // alphabeta: negamax 형태. 반환값은 항상 "지금 둘 차례인 player" 관점의 점수.
-func (e *Engine) alphabeta(b *Board, depth int, alpha, beta int, player Stone, currentScore int) int {
+func (e *Engine) alphabeta(b *Board, depth int, alpha, beta int, player Stone) int {
 	if depth == 0 {
-		if player == Black {
-			return currentScore
-		}
-		return -currentScore
+		return Evaluate(b, player)
 	}
 
 	moves := e.GenerateMoves(b, depth)
@@ -712,19 +658,12 @@ func (e *Engine) alphabeta(b *Board, depth int, alpha, beta int, player Stone, c
 		}
 		movesTried++
 
-		preScore := evaluateLinesAt(b, y, x)
-
 		b.Set(y, x, player)
-
-		postScore := evaluateLinesAt(b, y, x)
-
-		nextScore := currentScore + (postScore - preScore)
-
 		var score int
 		if CheckWinAt(b, y, x, player) {
 			score = winScore
 		} else {
-			score = -e.alphabeta(b, depth-1, -beta, -alpha, opponent(player), nextScore)
+			score = -e.alphabeta(b, depth-1, -beta, -alpha, opponent(player))
 		}
 		b.Set(y, x, Empty)
 

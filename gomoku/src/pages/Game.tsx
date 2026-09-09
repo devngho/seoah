@@ -7,6 +7,8 @@ import {
   createEmptyBoard,
   checkWin,
   isBoardFull,
+  isForbidden,
+  getForbiddenMoves,
 } from '../game/engine';
 import { getBestMove } from '../game/api';
 
@@ -23,7 +25,6 @@ function toApiBoard(board: Board): (0 | 1 | 2)[][] {
   );
 }
 
-// 이 색의 턴을 엔진이 두어야 하는지 여부
 function isAiTurn(mode: GameMode, turn: Stone): boolean {
   if (mode === 'ai-vs-ai') return true;
   if (mode === 'black') return turn === 'white';
@@ -42,6 +43,13 @@ export default function Game() {
   const [isReviewing, setIsReviewing] = createSignal(false);
 
   const [gameId, setGameId] = createSignal(0);
+
+  // 대국 중 흑돌 차례일 때 금수 위치 계산
+  const forbiddenSet = createMemo(() => {
+    if (currentTurn() !== 'black' || winner()) return new Set<string>();
+    const plainBoard = board.map((row) => [...row]);
+    return getForbiddenMoves(plainBoard);
+  });
 
   function placeStone(row: number, col: number, color: Stone) {
     if (board[row][col] !== null || winner()) return;
@@ -63,10 +71,13 @@ export default function Game() {
     const m = mode();
     if (!m || m === 'ai-vs-ai' || winner() || thinking()) return;
     if (currentTurn() !== m) return;
+    
+    // 흑돌 착수 시 금수 자리는 착수 불가
+    if (m === 'black' && isForbidden(board.map((r) => [...r]), row, col)) return;
+
     placeStone(row, col, m);
   }
 
-  // 엔진이 두어야 할 턴이면 자동으로 요청
   createEffect(() => {
     const m = mode();
     const turn = currentTurn();
@@ -79,7 +90,7 @@ export default function Game() {
 
     getBestMove(toApiBoard(unwrap(board)), toApiStone(turn))
       .then((result) => {
-        if (gameId() !== myGameId) return; // 그 사이 재시작/모드변경 됐으면 무시
+        if (gameId() !== myGameId) return;
 
         if (result.noMove) {
           setWinner('draw');
@@ -127,7 +138,7 @@ export default function Game() {
             <Show when={aiError()}>
               <p class="ai-error">{aiError()}</p>
             </Show>
-            <BoardView board={board} onCellClick={handleCellClick} />
+            <BoardView board={board} onCellClick={handleCellClick} forbiddenSet={forbiddenSet()} />
             <Show when={winner()}>
               <div class="result-banner">
                 <p class="result-banner__text">
@@ -208,6 +219,7 @@ function BoardView(props: {
   board: Board;
   onCellClick: (row: number, col: number) => void;
   lastMove?: { row: number; col: number } | null;
+  forbiddenSet?: Set<string>;
 }) {
   const starPoints = [3, 7, 11];
   const isStar = (r: number, c: number) => starPoints.includes(r) && starPoints.includes(c);
@@ -218,26 +230,33 @@ function BoardView(props: {
       <For each={props.board}>
         {(row, r) => (
           <For each={row}>
-            {(cell, c) => (
-              <button
-                class="board__point"
-                style={{
-                  top: `${(r() / (BOARD_SIZE - 1)) * 100}%`,
-                  left: `${(c() / (BOARD_SIZE - 1)) * 100}%`,
-                }}
-                onClick={() => props.onCellClick(r(), c())}
-              >
-                <Show when={isStar(r(), c()) && !cell}>
-                  <span class="board__star" />
-                </Show>
-                <Show when={cell}>
-                  <span
-                    class={`stone stone--${cell}`}
-                    classList={{ 'stone--last': isLast(r(), c()) }}
-                  />
-                </Show>
-              </button>
-            )}
+            {(cell, c) => {
+              const isForbiddenPoint = () => !cell && props.forbiddenSet?.has(`${r()}-${c()}`);
+
+              return (
+                <button
+                  class="board__point"
+                  style={{
+                    top: `${(r() / (BOARD_SIZE - 1)) * 100}%`,
+                    left: `${(c() / (BOARD_SIZE - 1)) * 100}%`,
+                  }}
+                  onClick={() => props.onCellClick(r(), c())}
+                >
+                  <Show when={isStar(r(), c()) && !cell && !isForbiddenPoint()}>
+                    <span class="board__star" />
+                  </Show>
+                  <Show when={isForbiddenPoint()}>
+                    <span class="board__forbidden">✕</span>
+                  </Show>
+                  <Show when={cell}>
+                    <span
+                      class={`stone stone--${cell}`}
+                      classList={{ 'stone--last': isLast(r(), c()) }}
+                    />
+                  </Show>
+                </button>
+              );
+            }}
           </For>
         )}
       </For>
@@ -257,6 +276,18 @@ function ReplayView(props: { history: Move[]; onExit: () => void }) {
     return b;
   });
 
+  // 복기 단계에서 다음 둘 차례 계산 (0수, 2수, 4수... = 흑 차례)
+  const currentTurn = () => (step() % 2 === 0 ? 'black' : 'white');
+
+  // 복기 중 흑 차례일 때만 금수 위치 계산
+  const forbiddenSet = createMemo(() => {
+    if (currentTurn() !== 'black' || step() >= props.history.length) {
+      return new Set<string>();
+    }
+    const plainBoard = board().map((row) => [...row]);
+    return getForbiddenMoves(plainBoard);
+  });
+
   const lastMove = () => (step() > 0 ? props.history[step() - 1] : null);
 
   const goFirst = () => setStep(0);
@@ -268,10 +299,15 @@ function ReplayView(props: { history: Move[]; onExit: () => void }) {
     <div class="game__content">
       <div class="replay-bar">
         <span>
-          복기 · {step()} / {props.history.length}수
+          복기 · {step()} / {props.history.length}수 ({step() < props.history.length ? `${currentTurn() === 'black' ? '흑' : '백'} 차례` : '종료'})
         </span>
       </div>
-      <BoardView board={board()} onCellClick={() => {}} lastMove={lastMove()} />
+      <BoardView
+        board={board()}
+        onCellClick={() => {}}
+        lastMove={lastMove()}
+        forbiddenSet={forbiddenSet()}
+      />
       <div class="replay-controls">
         <button class="replay-btn" onClick={goFirst} disabled={step() === 0}>
           처음

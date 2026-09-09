@@ -6,6 +6,10 @@ export function createEmptyBoard(): Board {
   return Array.from({ length: BOARD_SIZE }, () => Array<Stone>(BOARD_SIZE).fill(null));
 }
 
+export function cloneBoard(board: Board): Board {
+  return board.map((row) => [...row]);
+}
+
 function inBounds(r: number, c: number) {
   return r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE;
 }
@@ -28,7 +32,11 @@ export function checkWin(board: Board, row: number, col: number, color: Stone): 
   for (const [dr, dc] of directions) {
     const count =
       1 + countDir(board, row, col, dr, dc, color) + countDir(board, row, col, -dr, -dc, color);
-    if (count >= 5) return true;
+    if (color === 'black') {
+      if (count === 5) return true;
+    } else {
+      if (count >= 5) return true;
+    }
   }
   return false;
 }
@@ -37,95 +45,140 @@ export function isBoardFull(board: Board): boolean {
   return board.every((row) => row.every((cell) => cell !== null));
 }
 
-// 특정 방향으로 이어진 돌 개수와, 그 라인의 양 끝이 열려있는지(빈칸인지) 계산
-function getLineInfo(board: Board, row: number, col: number, dr: number, dc: number, color: Stone) {
-  let count = 1;
-  let openEnds = 0;
+// 렌주룰
 
-  let r = row + dr, c = col + dc;
-  while (inBounds(r, c) && board[r][c] === color) {
-    count++;
-    r += dr; c += dc;
-  }
-  if (inBounds(r, c) && board[r][c] === null) openEnds++;
-
-  r = row - dr; c = col - dc;
-  while (inBounds(r, c) && board[r][c] === color) {
-    count++;
-    r -= dr; c -= dc;
-  }
-  if (inBounds(r, c) && board[r][c] === null) openEnds++;
-
-  return { count, openEnds };
+function getLineLength(board: Board, row: number, col: number, dr: number, dc: number, color: Stone): number {
+  return 1 + countDir(board, row, col, dr, dc, color) + countDir(board, row, col, -dr, -dc, color);
 }
 
-function scoreFromLine(count: number, openEnds: number): number {
-  if (count >= 5) return 1_000_000;
-  if (count === 4) return openEnds >= 1 ? 100_000 : 100;
-  if (count === 3) return openEnds === 2 ? 10_000 : openEnds === 1 ? 1_000 : 50;
-  if (count === 2) return openEnds === 2 ? 500 : openEnds === 1 ? 100 : 10;
-  return openEnds >= 1 ? 10 : 1;
-}
-
-function evaluatePoint(board: Board, row: number, col: number, color: Stone): number {
+function hasExactFive(board: Board, row: number, col: number): boolean {
   const axes: [number, number][] = [[0, 1], [1, 0], [1, 1], [1, -1]];
-  let score = 0;
   for (const [dr, dc] of axes) {
-    const { count, openEnds } = getLineInfo(board, row, col, dr, dc, color);
-    score += scoreFromLine(count, openEnds);
+    if (getLineLength(board, row, col, dr, dc, 'black') === 5) return true;
   }
-  return score;
+  return false;
 }
 
-// 기존 돌 주변 2칸 이내의 빈 칸만 후보로 삼아 계산량을 줄임
-function getCandidates(board: Board): { row: number; col: number }[] {
-  const candidates: { row: number; col: number }[] = [];
-  const seen = new Set<string>();
-  let hasStone = false;
+function hasOverline(board: Board, row: number, col: number): boolean {
+  const axes: [number, number][] = [[0, 1], [1, 0], [1, 1], [1, -1]];
+  for (const [dr, dc] of axes) {
+    if (getLineLength(board, row, col, dr, dc, 'black') > 5) return true;
+  }
+  return false;
+}
+
+function countFoursAll(board: Board, row: number, col: number): number {
+  const axes: [number, number][] = [[0, 1], [1, 0], [1, 1], [1, -1]];
+  let totalFours = 0;
+
+  for (const [dr, dc] of axes) {
+    const winningSpots: { r: number; c: number }[] = [];
+
+    for (let i = -4; i <= 4; i++) {
+      if (i === 0) continue;
+      const r = row + dr * i;
+      const c = col + dc * i;
+      if (inBounds(r, c) && board[r][c] === null) {
+        board[r][c] = 'black';
+        if (getLineLength(board, r, c, dr, dc, 'black') === 5) {
+          winningSpots.push({ r, c });
+        }
+        board[r][c] = null;
+      }
+    }
+
+    if (winningSpots.length === 1) {
+      totalFours += 1;
+    } else if (winningSpots.length >= 2) {
+      const isContiguousOpenFour = getLineLength(board, row, col, dr, dc, 'black') === 4;
+      totalFours += isContiguousOpenFour ? 1 : winningSpots.length;
+    }
+  }
+
+  return totalFours;
+}
+
+function countThreesAll(board: Board, row: number, col: number): number {
+  const axes: [number, number][] = [[0, 1], [1, 0], [1, 1], [1, -1]];
+  let openThreeCount = 0;
+
+  for (const [dr, dc] of axes) {
+    let hasOpenThreeOnAxis = false;
+
+    for (let i = -4; i <= 4; i++) {
+      if (i === 0) continue;
+      const r = row + dr * i;
+      const c = col + dc * i;
+      if (inBounds(r, c) && board[r][c] === null) {
+        board[r][c] = 'black';
+        if (getLineLength(board, r, c, dr, dc, 'black') === 4) {
+          let winSpotCount = 0;
+          for (let j = -4; j <= 4; j++) {
+            if (j === 0) continue;
+            const r2 = r + dr * j;
+            const c2 = c + dc * j;
+            if (inBounds(r2, c2) && board[r2][c2] === null) {
+              board[r2][c2] = 'black';
+              if (getLineLength(board, r2, c2, dr, dc, 'black') === 5) {
+                winSpotCount++;
+              }
+              board[r2][c2] = null;
+            }
+          }
+          if (winSpotCount === 2 && !hasOverline(board, r, c)) {
+            hasOpenThreeOnAxis = true;
+          }
+        }
+        board[r][c] = null;
+        if (hasOpenThreeOnAxis) break;
+      }
+    }
+
+    if (hasOpenThreeOnAxis) openThreeCount++;
+  }
+
+  return openThreeCount;
+}
+
+export function isForbidden(board: Board, row: number, col: number): boolean {
+  if (!inBounds(row, col) || board[row][col] !== null) return false;
+
+  board[row][col] = 'black';
+
+  if (hasExactFive(board, row, col)) {
+    board[row][col] = null;
+    return false;
+  }
+
+  if (hasOverline(board, row, col)) {
+    board[row][col] = null;
+    return true;
+  }
+
+  if (countFoursAll(board, row, col) >= 2) {
+    board[row][col] = null;
+    return true;
+  }
+
+  if (countThreesAll(board, row, col) >= 2) {
+    board[row][col] = null;
+    return true;
+  }
+
+  board[row][col] = null;
+  return false;
+}
+
+export function getForbiddenMoves(board: Board): Set<string> {
+  const set = new Set<string>();
+  const cleanBoard = cloneBoard(board);
 
   for (let r = 0; r < BOARD_SIZE; r++) {
     for (let c = 0; c < BOARD_SIZE; c++) {
-      if (board[r][c] === null) continue;
-      hasStone = true;
-      for (let dr = -2; dr <= 2; dr++) {
-        for (let dc = -2; dc <= 2; dc++) {
-          const nr = r + dr, nc = c + dc;
-          if (!inBounds(nr, nc) || board[nr][nc] !== null) continue;
-          const key = `${nr}-${nc}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            candidates.push({ row: nr, col: nc });
-          }
-        }
+      if (cleanBoard[r][c] === null && isForbidden(cleanBoard, r, c)) {
+        set.add(`${r}-${c}`);
       }
     }
   }
-
-  if (!hasStone) {
-    const mid = Math.floor(BOARD_SIZE / 2);
-    return [{ row: mid, col: mid }];
-  }
-  return candidates;
-}
-
-export function bestMove(board: Board, aiColor: Stone, humanColor: Stone): { row: number; col: number } | null {
-  const candidates = getCandidates(board);
-  let best: { row: number; col: number } | null = null;
-  let bestScore = -Infinity;
-
-  for (const { row, col } of candidates) {
-    board[row][col] = aiColor;
-    const attackScore = evaluatePoint(board, row, col, aiColor);
-    board[row][col] = humanColor;
-    const defenseScore = evaluatePoint(board, row, col, humanColor);
-    board[row][col] = null;
-
-    const total = attackScore + defenseScore * 0.9;
-    if (total > bestScore) {
-      bestScore = total;
-      best = { row, col };
-    }
-  }
-
-  return best;
+  return set;
 }
