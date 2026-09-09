@@ -11,12 +11,13 @@ interface BestMoveResponse {
 
 export async function getBestMove(
   board: Board,
-  player: 1 | 2
+  player: 1 | 2,
+  lastMove?: { row: number; col: number },
 ): Promise<BestMoveResponse> {
   const res = await fetch(`${location.origin}/api/best-move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ board, player }),
+    body: JSON.stringify({ board, player, lastMove }),
   });
 
   if (!res.ok) {
