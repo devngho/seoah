@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
+	"math/rand"
 	"net/http"
 	"runtime"
 	"sort"
@@ -89,57 +91,6 @@ func NoRenjuConfig() RenjuConfig {
 // 라인 분석 유틸
 // ============================================================
 
-// evaluateLinesAt: (y, x) 좌표를 십자 및 대각선으로 교차하는 4방향 라인의 점수 합산
-func evaluateLinesAt(b *Board, y, x int) int {
-	var blackScore, whiteScore int
-	for _, d := range directions {
-		// (y,x)가 포함된 연속된 돌의 양 끝점을 찾고 openStart/openEnd를 판별
-		// (기존 evaluateDirectionBoth 로직을 (y,x) 중심으로 국소화)
-		length, openStart, openEnd, stone := scanLineSegment(b, y, x, d[0], d[1])
-		if stone == Empty {
-			continue
-		}
-
-		score := patternScore(length, openStart, openEnd)
-		if stone == Black {
-			blackScore += score
-		} else {
-			whiteScore += score
-		}
-	}
-	// 항상 흑(Black) 기준으로 점수를 반환 (백의 이득은 마이너스)
-	return blackScore - whiteScore
-}
-
-// scanLineSegment: 주어진 방향에서 (y,x)를 포함하는 연속된 돌의 정보를 추출
-func scanLineSegment(b *Board, y, x, dx, dy int) (int, bool, bool, Stone) {
-	s := b.Get(y, x)
-	if s == Empty {
-		return 0, false, false, Empty
-	}
-
-	length := 1
-	// 정방향 탐색
-	cy, cx := y+dy, x+dx
-	for inBounds(cy, cx) && b.Get(cy, cx) == s {
-		length++
-		cy += dy
-		cx += dx
-	}
-	openEnd := inBounds(cy, cx) && b.Get(cy, cx) == Empty
-
-	// 역방향 탐색
-	py, px := y-dy, x-dx
-	for inBounds(py, px) && b.Get(py, px) == s {
-		length++
-		py -= dy
-		px -= dx
-	}
-	openStart := inBounds(py, px) && b.Get(py, px) == Empty
-
-	return length, openStart, openEnd, s
-}
-
 // runLength: (y,x)에 stone이 이미 놓여있다고 가정하고, (dx,dy) 방향 양쪽으로
 // 이어지는 연속된 길이를 반환합니다.
 func runLength(b *Board, y, x, dx, dy int, stone Stone) int {
@@ -212,17 +163,35 @@ func lineWindow(b *Board, y, x, dx, dy int, stone Stone) [lineWindowSize]byte {
 }
 
 // countOpenThrees: (y,x)에 stone을 놓았을 때 만들어지는 "열린 3" 개수.
-// 간이 판정: 9칸 윈도우 안에 "_SSS_" 패턴이 있으면 열린 3으로 간주.
+// 연속 3("_SSS_")뿐 아니라 띈3("_SS_S_", "_S_SS_")도 함께 감지한다.
 // (완전한 렌주룰의 "살아있는 3" 판정보다는 단순화된 근사치입니다)
 func countOpenThrees(b *Board, y, x int, stone Stone) int {
 	count := 0
 	for _, d := range directions {
 		win := lineWindow(b, y, x, d[0], d[1], stone)
+
+		found := false
 		for i := 0; i+5 <= lineWindowSize; i++ {
 			if win[i] == '_' && win[i+1] == 'S' && win[i+2] == 'S' && win[i+3] == 'S' && win[i+4] == '_' {
-				count++
+				found = true
 				break
 			}
+		}
+		// 띈3: _SS_S_ / _S_SS_ (길이 6짜리 윈도우)
+		if !found {
+			for i := 0; i+6 <= lineWindowSize; i++ {
+				if win[i] == '_' && win[i+1] == 'S' && win[i+2] == 'S' && win[i+3] == '_' && win[i+4] == 'S' && win[i+5] == '_' {
+					found = true
+					break
+				}
+				if win[i] == '_' && win[i+1] == 'S' && win[i+2] == '_' && win[i+3] == 'S' && win[i+4] == 'S' && win[i+5] == '_' {
+					found = true
+					break
+				}
+			}
+		}
+		if found {
+			count++
 		}
 	}
 	return count
@@ -488,6 +457,27 @@ type Engine struct {
 	// 빠르게 올라가서 이후 형제 수들의 컷오프 효율이 좋아진다.
 	pvMove [2]int
 	hasPV  bool
+
+	// Softmax + top-p 샘플링: 활성화하면 마지막 depth의 루트 수 선택에서
+	// 단순 argmax 대신, 각 후보 수의 평가치에 softmax를 적용해 확률적으로
+	// 하나를 뽑는다. top-p(누적 확률 p)로 후보를 추리고, 그 안에서만
+	// 확률에 따라 샘플링한다. rng는 Seed로 고정되어 재현 가능하다.
+	Softmax SoftmaxTopPConfig
+	rng     *rand.Rand
+}
+
+// SoftmaxTopPConfig: 최선 수 하나만 고르는 대신 확률적으로 수를 선택할 때 쓰는 설정.
+type SoftmaxTopPConfig struct {
+	Enabled     bool    // false면 기존처럼 argmax(최고 점수)로만 선택
+	Temperature float64 // softmax 온도. 1.0이 기본, 작을수록 최고점 수에 더 쏠림
+	TopP        float64 // 0 < TopP <= 1. 확률 높은 수부터 누적해 p가 될 때까지만 후보로 남김
+	Seed        int64   // 난수 시드 (하드코딩해서 재현 가능하게 사용)
+}
+
+// SetSoftmaxTopP: softmax + top-p 샘플링 설정을 적용하고, Seed로 고정된 rng를 준비한다.
+func (e *Engine) SetSoftmaxTopP(cfg SoftmaxTopPConfig) {
+	e.Softmax = cfg
+	e.rng = rand.New(rand.NewSource(cfg.Seed))
 }
 
 func NewEngine(cfg RenjuConfig, maxDepth int) *Engine {
@@ -526,7 +516,14 @@ func (e *Engine) FindBestMove(b *Board, player Stone) (int, int, int) {
 	e.hasPV = false
 
 	for depth := 1; depth <= e.MaxDepth; depth++ {
-		y, x, score := e.searchRootParallel(b, player, depth)
+		var y, x, score int
+		if e.Softmax.Enabled && depth == e.MaxDepth {
+			// 마지막 depth에서만 확률적 선택 사용. 그 이전 depth들은 PV(최선 수)를
+			// 안정적으로 쌓아서 move ordering 품질을 유지하기 위해 argmax 그대로 둔다.
+			y, x, score = e.searchRootSoftmaxTopP(b, player, depth)
+		} else {
+			y, x, score = e.searchRootParallel(b, player, depth)
+		}
 		if y != -1 {
 			bestY, bestX, bestScore = y, x, score
 			// 다음(depth+1) 반복에서 이 수를 최우선으로 탐색하도록 기록.
@@ -562,7 +559,7 @@ func (e *Engine) searchRoot(b *Board, player Stone, depth int) (int, int, int) {
 		if CheckWinAt(b, y, x, player) {
 			score = winScore
 		} else {
-			score = -e.alphabeta(b, depth-1, -beta, -alpha, opponent(player), score)
+			score = -e.alphabeta(b, depth-1, -beta, -alpha, opponent(player))
 		}
 		b.Set(y, x, Empty)
 
@@ -577,27 +574,15 @@ func (e *Engine) searchRoot(b *Board, player Stone, depth int) (int, int, int) {
 	return bestY, bestX, best
 }
 
-// searchRootParallel: searchRoot과 같은 결과를 내지만, 루트의 각 후보 수를
-// goroutine으로 나눠서 동시에 탐색한다. 루트의 각 자식 서브트리는 서로
-// 완전히 독립적이므로(보드 복사본 위에서 작업) 병렬화하기 좋은 지점이다.
-//
-// 주의할 점 두 가지:
-//
-//  1. Engine의 GenerateMoves/orderMoves 버퍼(visitedBuf, movesBufs, scoreBufs)는
-//     "싱글스레드 순차 탐색"을 전제로 depth 인덱싱만으로 안전하게 재사용하도록
-//     만들어져 있다. 여러 goroutine이 같은 *Engine을 동시에 쓰면 이 버퍼들에서
-//     데이터 레이스가 난다. 그래서 워커(고루틴)마다 자신만의 *Engine(=자신만의
-//     버퍼)을 새로 만들어 쓴다. Engine 생성 자체는 슬라이스 몇 개 할당하는
-//     가벼운 작업이라 워커 수(보통 CPU 코어 수)만큼만 만들면 비용이 크지 않다.
-//
-//  2. 순수 순차 알파베타는 형제 노드끼리 alpha를 갱신하며 가지치기 효율이
-//     좋아지는데, 동시에 도는 goroutine들은 그 시점의 alpha를 실시간으로
-//     공유하지 못한다. 완전히 무시하면 가지치기가 거의 안 되므로, 대신
-//     "이미 완료된 형제 수의 점수 중 최댓값"을 atomic 변수로 공유해서,
-//     새로 시작하는 워커가 그 값을 초기 alpha로 사용하게 한다. 이미 실제로
-//     달성 가능한 것으로 확인된 점수이므로 최적성을 해치지 않는 안전한
-//     하한선이며, 동시성 오버헤드도 거의 없다(락 없는 CAS 루프).
-func (e *Engine) searchRootParallel(b *Board, player Stone, depth int) (int, int, int) {
+// moveResult: 루트의 한 후보 수와 그 수를 뒀을 때의 평가 점수.
+type moveResult struct {
+	y, x, score int
+}
+
+// evaluateRootMoves: 루트의 합법 후보 수 전부에 대해 (병렬로) 점수를 계산해서
+// 리스트로 반환한다. searchRootParallel(argmax 선택)과 searchRootSoftmaxTopP
+// (확률적 선택) 둘 다 이 함수를 공유해서 쓴다.
+func (e *Engine) evaluateRootMoves(b *Board, player Stone, depth int) []moveResult {
 	moves := e.GenerateMoves(b, depth)
 	moves = e.orderMoves(b, moves, player, depth, true)
 
@@ -611,7 +596,7 @@ func (e *Engine) searchRootParallel(b *Board, player Stone, depth int) (int, int
 		}
 	}
 	if len(legal) == 0 {
-		return -1, -1, negInf
+		return nil
 	}
 
 	numWorkers := runtime.NumCPU()
@@ -620,10 +605,6 @@ func (e *Engine) searchRootParallel(b *Board, player Stone, depth int) (int, int
 	}
 	if numWorkers < 1 {
 		numWorkers = 1
-	}
-
-	type moveResult struct {
-		y, x, score int
 	}
 
 	jobs := make(chan [2]int, len(legal))
@@ -657,7 +638,7 @@ func (e *Engine) searchRootParallel(b *Board, player Stone, depth int) (int, int
 					score = winScore
 				} else {
 					alpha := int(atomic.LoadInt64(&sharedAlpha))
-					score = -workerEngine.alphabeta(&boardCopy, depth-1, negInf, -alpha, opponent(player), score)
+					score = -workerEngine.alphabeta(&boardCopy, depth-1, negInf, -alpha, opponent(player))
 				}
 
 				results <- moveResult{y, x, score}
@@ -679,9 +660,41 @@ func (e *Engine) searchRootParallel(b *Board, player Stone, depth int) (int, int
 	wg.Wait()
 	close(results)
 
+	all := make([]moveResult, 0, len(legal))
+	for r := range results {
+		all = append(all, r)
+	}
+	return all
+}
+
+// searchRootParallel: 루트 후보 수들을 병렬 평가한 뒤, 가장 점수가 높은 수를 고른다
+// (argmax). searchRoot과 결과 자체는 같지만 goroutine으로 나눠서 계산한다.
+//
+// 주의할 점 두 가지:
+//
+//  1. Engine의 GenerateMoves/orderMoves 버퍼(visitedBuf, movesBufs, scoreBufs)는
+//     "싱글스레드 순차 탐색"을 전제로 depth 인덱싱만으로 안전하게 재사용하도록
+//     만들어져 있다. 여러 goroutine이 같은 *Engine을 동시에 쓰면 이 버퍼들에서
+//     데이터 레이스가 난다. 그래서 워커(고루틴)마다 자신만의 *Engine(=자신만의
+//     버퍼)을 새로 만들어 쓴다. Engine 생성 자체는 슬라이스 몇 개 할당하는
+//     가벼운 작업이라 워커 수(보통 CPU 코어 수)만큼만 만들면 비용이 크지 않다.
+//
+//  2. 순수 순차 알파베타는 형제 노드끼리 alpha를 갱신하며 가지치기 효율이
+//     좋아지는데, 동시에 도는 goroutine들은 그 시점의 alpha를 실시간으로
+//     공유하지 못한다. 완전히 무시하면 가지치기가 거의 안 되므로, 대신
+//     "이미 완료된 형제 수의 점수 중 최댓값"을 atomic 변수로 공유해서,
+//     새로 시작하는 워커가 그 값을 초기 alpha로 사용하게 한다. 이미 실제로
+//     달성 가능한 것으로 확인된 점수이므로 최적성을 해치지 않는 안전한
+//     하한선이며, 동시성 오버헤드도 거의 없다(락 없는 CAS 루프).
+func (e *Engine) searchRootParallel(b *Board, player Stone, depth int) (int, int, int) {
+	results := e.evaluateRootMoves(b, player, depth)
+	if len(results) == 0 {
+		return -1, -1, negInf
+	}
+
 	bestY, bestX := -1, -1
 	best := negInf
-	for r := range results {
+	for _, r := range results {
 		if r.score > best {
 			best = r.score
 			bestY, bestX = r.y, r.x
@@ -690,13 +703,91 @@ func (e *Engine) searchRootParallel(b *Board, player Stone, depth int) (int, int
 	return bestY, bestX, best
 }
 
-// alphabeta: negamax 형태. 반환값은 항상 "지금 둘 차례인 player" 관점의 점수.
-func (e *Engine) alphabeta(b *Board, depth int, alpha, beta int, player Stone, currentScore int) int {
-	if depth == 0 {
-		if player == Black {
-			return currentScore
+// searchRootSoftmaxTopP: 루트 후보 수들을 병렬 평가하는 것까지는 searchRootParallel과
+// 같지만, 가장 점수가 높은 수를 그대로 고르는 대신 softmax + top-p 샘플링으로
+// 확률적으로 하나를 선택한다.
+func (e *Engine) searchRootSoftmaxTopP(b *Board, player Stone, depth int) (int, int, int) {
+	results := e.evaluateRootMoves(b, player, depth)
+	if len(results) == 0 {
+		return -1, -1, negInf
+	}
+
+	y, x, score := selectSoftmaxTopP(e.rng, results, e.Softmax.Temperature, e.Softmax.TopP)
+	return y, x, score
+}
+
+// selectSoftmaxTopP: 후보 수들의 점수에 softmax를 적용해 확률분포를 만들고,
+// 점수 높은 순으로 누적 확률이 topP에 도달할 때까지의 수들만 남겨 재정규화한 뒤
+// (top-p / nucleus sampling), 그 안에서 rng로 하나를 뽑는다.
+func selectSoftmaxTopP(rng *rand.Rand, results []moveResult, temperature, topP float64) (int, int, int) {
+	n := len(results)
+
+	// 점수 내림차순 정렬 (원본 순서를 바꾸지 않도록 복사본에서)
+	sorted := make([]moveResult, n)
+	copy(sorted, results)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].score > sorted[j].score })
+
+	temp := temperature
+	if temp <= 0 {
+		temp = 1.0
+	}
+	maxScore := float64(sorted[0].score)
+
+	// 오버플로우 방지를 위해 최댓값 기준으로 shift한 뒤 지수화 (안정적 softmax)
+	weights := make([]float64, n)
+	sum := 0.0
+	for i, r := range sorted {
+		shifted := (float64(r.score) - maxScore) / temp
+		w := math.Exp(shifted)
+		weights[i] = w
+		sum += w
+	}
+
+	probs := make([]float64, n)
+	for i, w := range weights {
+		probs[i] = w / sum
+	}
+
+	// top-p: 확률 높은 것부터 누적해서 p에 도달하는 지점까지만 후보로 남김
+	p := topP
+	if p <= 0 || p > 1 {
+		p = 1.0
+	}
+	cutoff := n
+	cum := 0.0
+	for i, pr := range probs {
+		cum += pr
+		if cum >= p {
+			cutoff = i + 1
+			break
 		}
-		return -currentScore
+	}
+
+	// 남은 후보들만 재정규화
+	total := 0.0
+	for i := 0; i < cutoff; i++ {
+		total += probs[i]
+	}
+
+	r := rng.Float64() * total
+	acc := 0.0
+	chosen := cutoff - 1 // 부동소수점 오차로 못 걸리는 경우 마지막 후보를 fallback으로
+	for i := 0; i < cutoff; i++ {
+		acc += probs[i]
+		if r <= acc {
+			chosen = i
+			break
+		}
+	}
+
+	m := sorted[chosen]
+	return m.y, m.x, m.score
+}
+
+// alphabeta: negamax 형태. 반환값은 항상 "지금 둘 차례인 player" 관점의 점수.
+func (e *Engine) alphabeta(b *Board, depth int, alpha, beta int, player Stone) int {
+	if depth == 0 {
+		return Evaluate(b, player)
 	}
 
 	moves := e.GenerateMoves(b, depth)
@@ -712,19 +803,12 @@ func (e *Engine) alphabeta(b *Board, depth int, alpha, beta int, player Stone, c
 		}
 		movesTried++
 
-		preScore := evaluateLinesAt(b, y, x)
-
 		b.Set(y, x, player)
-
-		postScore := evaluateLinesAt(b, y, x)
-
-		nextScore := currentScore + (postScore - preScore)
-
 		var score int
 		if CheckWinAt(b, y, x, player) {
 			score = winScore
 		} else {
-			score = -e.alphabeta(b, depth-1, -beta, -alpha, opponent(player), nextScore)
+			score = -e.alphabeta(b, depth-1, -beta, -alpha, opponent(player))
 		}
 		b.Set(y, x, Empty)
 
@@ -931,6 +1015,12 @@ func handleBestMove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	engine := NewEngine(cfg, depth)
+	engine.SetSoftmaxTopP(SoftmaxTopPConfig{
+		Enabled:     true,
+		Temperature: 0.5,
+		TopP:        0.9,
+		Seed:        42,
+	})
 	y, x, score := engine.FindBestMove(board, Stone(req.Player))
 
 	w.Header().Set("Content-Type", "application/json")
