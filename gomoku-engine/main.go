@@ -464,6 +464,10 @@ type Engine struct {
 	// 확률에 따라 샘플링한다. rng는 Seed로 고정되어 재현 가능하다.
 	Softmax SoftmaxTopPConfig
 	rng     *rand.Rand
+
+	// MaxNodes: 한 번의 FindBestMove(=API 요청 한 번) 동안 탐색할 노드 수 상한. (0 = 무제한)
+	MaxNodes     int64
+	nodesVisited *int64
 }
 
 // SoftmaxTopPConfig: 최선 수 하나만 고르는 대신 확률적으로 수를 선택할 때 쓰는 설정.
@@ -492,7 +496,24 @@ func NewEngine(cfg RenjuConfig, maxDepth int) *Engine {
 		e.movesBufs[i] = make([][2]int, 0, boardSize*boardSize)
 		e.scoreBufs[i] = make([]int, 0, boardSize*boardSize)
 	}
+	e.nodesVisited = new(int64)
 	return e
+}
+
+// budgetExceeded: MaxNodes가 설정되어 있고 이미 그만큼(또는 그 이상) 노드를
+// 방문했으면 true. MaxNodes<=0이면 무제한이라 항상 false.
+func (e *Engine) budgetExceeded() bool {
+	return e.MaxNodes > 0 && atomic.LoadInt64(e.nodesVisited) >= e.MaxNodes
+}
+
+// countNode: 노드 하나를 방문했다고 기록한다 (여러 goroutine이 동시에 호출 가능하므로 atomic).
+func (e *Engine) countNode() {
+	atomic.AddInt64(e.nodesVisited, 1)
+}
+
+// NodesVisited: 이번 탐색에서 실제로 방문한 노드 수 (디버깅/로그용).
+func (e *Engine) NodesVisited() int64 {
+	return atomic.LoadInt64(e.nodesVisited)
 }
 
 func (e *Engine) isIllegal(b *Board, y, x int, player Stone) bool {
@@ -514,8 +535,12 @@ func (e *Engine) FindBestMove(b *Board, player Stone) (int, int, int) {
 	// 이전 호출에서 남은 PV 수를 그대로 들고 가면 안 된다. depth=1 탐색
 	// 전에는 PV 수가 없는 상태로 시작한다.
 	e.hasPV = false
+	atomic.StoreInt64(e.nodesVisited, 0) // 이번 요청의 노드 카운트를 0부터 다시 시작
 
 	for depth := 1; depth <= e.MaxDepth; depth++ {
+		if e.budgetExceeded() {
+			break // 이전 depth에서 이미 노드 예산을 다 썼으면 더 깊이 들어가지 않음
+		}
 		var y, x, score int
 		if e.Softmax.Enabled && depth == e.MaxDepth {
 			// 마지막 depth에서만 확률적 선택 사용. 그 이전 depth들은 PV(최선 수)를
@@ -624,14 +649,26 @@ func (e *Engine) evaluateRootMoves(b *Board, player Stone, depth int) []moveResu
 
 			// 워커 전용 Engine: 부모(e)와 Config/Radius/MaxDepth는 같지만
 			// 탐색 버퍼는 독립적이라 데이터 레이스 없이 안전하게 재귀할 수 있다.
+			// MaxNodes/nodesVisited는 "요청 전체"에 대한 예산이므로 부모의
+			// 공유 카운터 포인터를 그대로 물려받는다 (워커마다 따로 세면 안 됨).
 			workerEngine := NewEngine(e.Config, e.MaxDepth)
 			workerEngine.Radius = e.Radius
+			workerEngine.MaxNodes = e.MaxNodes
+			workerEngine.nodesVisited = e.nodesVisited
 
 			for m := range jobs {
+				if e.budgetExceeded() {
+					// 예산 소진: 이 후보는 더 이상 평가하지 않는다. results에 아무것도
+					// 안 보내면 evaluateRootMoves는 그냥 이 수를 "안 본 것"으로 취급하고
+					// 이미 계산된 다른 후보들 중에서만 고른다.
+					continue
+				}
+
 				y, x := m[0], m[1]
 
 				boardCopy := *b // Board가 고정 배열이라 값 복사됨(각자 독립된 보드)
 				boardCopy.Set(y, x, player)
+				e.countNode()
 
 				var score int
 				if CheckWinAt(&boardCopy, y, x, player) {
@@ -786,7 +823,9 @@ func selectSoftmaxTopP(rng *rand.Rand, results []moveResult, temperature, topP f
 
 // alphabeta: negamax 형태. 반환값은 항상 "지금 둘 차례인 player" 관점의 점수.
 func (e *Engine) alphabeta(b *Board, depth int, alpha, beta int, player Stone) int {
-	if depth == 0 {
+	if depth == 0 || e.budgetExceeded() {
+		// 노드 예산을 다 썼으면 더 안 내려가고 지금 국면을 정적 평가로 대신한다
+		// (best-effort: 남은 depth는 포기하고 지금까지 본 것만으로 답한다).
 		return Evaluate(b, player)
 	}
 
@@ -797,11 +836,15 @@ func (e *Engine) alphabeta(b *Board, depth int, alpha, beta int, player Stone) i
 	movesTried := 0
 
 	for _, m := range moves {
+		if e.budgetExceeded() {
+			break // 예산 소진: 남은 형제 수들은 더 안 보고 지금까지의 best로 반환
+		}
 		y, x := m[0], m[1]
 		if e.isIllegal(b, y, x, player) {
 			continue
 		}
 		movesTried++
+		e.countNode()
 
 		b.Set(y, x, player)
 		var score int
@@ -911,21 +954,24 @@ type RenjuConfigDTO struct {
 // board: 15x15 2차원 배열, 0=Empty, 1=Black, 2=White (Stone enum과 값이 동일)
 // player: 최선의 수를 찾을 대상 색상 (1=Black, 2=White)
 type BestMoveRequest struct {
-	Board  [boardSize][boardSize]int `json:"board"`
-	Player int                       `json:"player"`
-	Depth  int                       `json:"depth,omitempty"` // 생략 시 서버 기본값 사용
-	Renju  *RenjuConfigDTO           `json:"renju,omitempty"` // 생략 시 서버 기본값 사용
+	Board    [boardSize][boardSize]int `json:"board"`
+	Player   int                       `json:"player"`
+	Depth    int                       `json:"depth,omitempty"`    // 생략 시 서버 기본값 사용
+	Renju    *RenjuConfigDTO           `json:"renju,omitempty"`    // 생략 시 서버 기본값 사용
+	MaxNodes int64                     `json:"maxNodes,omitempty"` // 생략(0) 시 무제한. 이 노드 수를 넘으면 그때까지의 결과만으로 응답.
 }
 
 type BestMoveResponse struct {
-	Y      int    `json:"y"`
-	X      int    `json:"x"`
-	Score  int    `json:"score"`
-	NoMove bool   `json:"noMove"` // true면 둘 수 있는 합법 수가 없음
-	Error  string `json:"error,omitempty"`
+	Y            int    `json:"y"`
+	X            int    `json:"x"`
+	Score        int    `json:"score"`
+	NoMove       bool   `json:"noMove"` // true면 둘 수 있는 합법 수가 없음
+	NodesVisited int64  `json:"nodesVisited"`
+	Error        string `json:"error,omitempty"`
 }
 
 const defaultSearchDepth = 6
+const defaultMaxNodes = 20000000
 
 func requestToBoard(req *BestMoveRequest) (*Board, error) {
 	b := NewBoard()
@@ -1017,21 +1063,22 @@ func handleBestMove(w http.ResponseWriter, r *http.Request) {
 	engine := NewEngine(cfg, depth)
 	engine.SetSoftmaxTopP(SoftmaxTopPConfig{
 		Enabled:     true,
-		Temperature: 0.5,
+		Temperature: 0.4,
 		TopP:        0.9,
 		Seed:        42,
 	})
+	engine.MaxNodes = defaultMaxNodes
 	y, x, score := engine.FindBestMove(board, Stone(req.Player))
 
 	w.Header().Set("Content-Type", "application/json")
 
 	if y == -1 {
 		// 합법적으로 둘 수 있는 곳이 없는 극단적인 경우
-		json.NewEncoder(w).Encode(BestMoveResponse{NoMove: true})
+		json.NewEncoder(w).Encode(BestMoveResponse{NoMove: true, NodesVisited: engine.NodesVisited()})
 		return
 	}
 
-	json.NewEncoder(w).Encode(BestMoveResponse{Y: y, X: x, Score: score})
+	json.NewEncoder(w).Encode(BestMoveResponse{Y: y, X: x, Score: score, NodesVisited: engine.NodesVisited()})
 }
 
 func main() {

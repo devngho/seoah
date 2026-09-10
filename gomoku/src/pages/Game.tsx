@@ -88,7 +88,13 @@ export default function Game() {
     setThinking(true);
     setAiError(null);
 
-    getBestMove(toApiBoard(unwrap(board)), toApiStone(turn))
+    getBestMove(toApiBoard(unwrap(board)), toApiStone(turn), {
+      renju: {
+        enabled: true,
+        forbidDoubleThree: true,
+        forbidDoubleFour: true,
+        forbidOverline: true,
+      }})
       .then((result) => {
         if (gameId() !== myGameId) return;
 
