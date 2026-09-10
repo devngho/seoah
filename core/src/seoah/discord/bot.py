@@ -7,6 +7,7 @@ from io import BytesIO
 from typing import Tuple
 
 import discord
+from google.genai import types
 
 from seoah.audio.tts import convert_text_to_ogg
 from seoah.config import load_config
@@ -17,7 +18,7 @@ from seoah.llm.session import (
     TextSessionPart,
 )
 from seoah.log import log
-from seoah.stream.stream import chunk_by, strip
+from seoah.stream.stream import chunk_by, strip, replace
 from seoah.stream.stream_stdout import stream_stdout_passthrough
 
 intents = discord.Intents.default()
@@ -168,10 +169,13 @@ async def on_message(message):
             )
 
             text_streams = [text_stream]
-            text_streams.append(chunk_by(text_streams[-1], [".", "\n", "\r", "!", "?"]))
+            text_streams.append(chunk_by(text_streams[-1], [". ", "\n", "\r", "!", "?"]))
             text_streams.append(strip(text_streams[-1]))
 
-            ogg_stream = convert_text_to_ogg(text_streams[-1])
+            if config.enable_tts:
+                ogg_stream = convert_text_to_ogg(text_streams[-1])
+            else:
+                ogg_stream = text_streams[-1]
 
             async def send_text(output: AsyncGenerator[str, None]):
                 async for chunk in stream_stdout_passthrough(output):
@@ -182,17 +186,26 @@ async def on_message(message):
                     await asyncio.sleep(0.5)  # slight delay
 
             async def send_audio(output: AsyncGenerator[Tuple[str, bytes], None]):
-                async for text, chunk in output:
-                    if not chunk:
-                        continue
-                    print(f"Sending audio chunk to Discord: {len(chunk)} bytes")
-                    with (
-                        BytesIO(chunk) as buffer,
-                        closing(discord.File(buffer, filename="output.ogg")) as file,
-                    ):
-                        await message.channel.send(text, file=file)
+                async for t in output:
+                    if isinstance(t, tuple):
+                        text, chunk = t
 
-                    await asyncio.sleep(0.5)  # slight delay
+                        if not chunk:
+                            continue
+
+                        print(f"Sending audio chunk to Discord: {len(chunk)} bytes")
+                        with (
+                            BytesIO(chunk) as buffer,
+                            closing(discord.File(buffer, filename="output.ogg")) as file,
+                        ):
+                            await message.channel.send(text, file=file)
+
+                        await asyncio.sleep(0.5)  # slight delay
+                    else:
+                        text = t
+                        print(f"Sending text chunk to Discord: {text}")
+                        await message.channel.send(text)
+                        await asyncio.sleep(0.5)  # slight delay
 
             async with (
                 aclosing(stream),
@@ -202,20 +215,20 @@ async def on_message(message):
                 aclosing(ogg_stream),
                 asyncio.TaskGroup() as group,
             ):
-                # group.create_task(send_text(text_stream))
+                # group.create_task(send_text(text_stream, record=True))
                 group.create_task(send_audio(ogg_stream))
                 group.create_task(send_text(meta_stream))
 
-    if message.channel.id in debounce_task_by_channel:
-        debounce_task_by_channel[message.channel.id].cancel()
+    while (previous := debounce_task_by_channel.get(message.channel.id)) is not None:
+        if not previous.done() and not previous.cancelling():
+            previous.cancel()
+        # The old stream must release its session before its replacement starts.
+        await asyncio.shield(asyncio.gather(previous, return_exceptions=True))
+        if debounce_task_by_channel.get(message.channel.id) is previous:
+            debounce_task_by_channel.pop(message.channel.id)
 
-        # cleanup last conversation, if the last interaction is in progress but empty
-        if (
-            ses.conversations
-            and ses.conversations[-1].is_in_progress
-            and not ses.conversations[-1].contents
-        ):
-            ses.conversations.pop()
+    if _shutting_down:
+        return
 
     ses.add_user_input(f"{message.author} said: {message.content}")
 
