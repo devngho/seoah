@@ -1008,20 +1008,6 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	json.NewEncoder(w).Encode(BestMoveResponse{Error: msg})
 }
 
-// handleBestMove: POST /api/best-move
-// 요청 예시:
-//
-//	{
-//	  "board": [[0,0,...], ...],  // 15x15
-//	  "player": 1,                // 1=Black, 2=White
-//	  "depth": 4,                 // 선택
-//	  "renju": {                  // 선택 (생략하면 기본 렌주룰 적용)
-//	    "enabled": true,
-//	    "forbidDoubleThree": true,
-//	    "forbidDoubleFour": true,
-//	    "forbidOverline": true
-//	  }
-//	}
 func handleBestMove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "POST만 허용됩니다")

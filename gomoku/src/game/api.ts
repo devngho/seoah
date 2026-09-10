@@ -26,18 +26,14 @@ interface BestMoveResponse {
 export async function getBestMove(
   board: Board,
   player: 1 | 2,
-  options?: { renju?: RenjuConfig; }
+  options?: { renju?: RenjuConfig; },
+  lastMove?: { row: number; col: number },
 ): Promise<BestMoveResponse> {
-  const body: BestMoveRequest = {
-    board,
-    player,
-    ...(options?.renju !== undefined && { renju: options.renju }),
-  };
-
+  console.log(player, " request")
   const res = await fetch(`${location.origin}/api/best-move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ board, player, options, lastMove }),
   });
 
   if (!res.ok) {
