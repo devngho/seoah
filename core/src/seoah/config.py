@@ -24,6 +24,7 @@ class ConfigFile(BaseModel):
         default="cpu", description="Torch device for model inference."
     )
 
+    enable_tts: bool = Field(default=True, description="Enable text-to-speech functionality.")
     tts_backend: Literal["cosyvoice_cpp", "cosyvoice", "supertone", "omnivoice"] = (
         "cosyvoice_cpp"
     )
