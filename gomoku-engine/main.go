@@ -1,6 +1,8 @@
 package main
 
 import (
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -133,11 +135,6 @@ func CheckWinAt(b *Board, y, x int, stone Stone) bool {
 
 // lineWindow: 렌주 금수 판정용 9칸(radius=4 고정) 윈도우.
 // 'S' = 해당 stone, '_' = 빈칸, 'o' = 상대 돌 또는 보드 밖(막힘)
-//
-// 성능 노트: 예전 lineToString은 strings.Builder로 매번 힙에 문자열을
-// 새로 할당했다. IsForbidden은 Black 착수 후보마다(렌주룰 활성화 시)
-// 4방향씩 이 함수를 호출하므로 탐색 중 GC 압박이 컸다. 크기가 고정(9)이므로
-// 스택에 올라가는 배열로 바꿔 할당을 없앤다.
 const lineWindowRadius = 4
 const lineWindowSize = lineWindowRadius*2 + 1 // 9
 
@@ -163,8 +160,6 @@ func lineWindow(b *Board, y, x, dx, dy int, stone Stone) [lineWindowSize]byte {
 }
 
 // countOpenThrees: (y,x)에 stone을 놓았을 때 만들어지는 "열린 3" 개수.
-// 연속 3("_SSS_")뿐 아니라 띈3("_SS_S_", "_S_SS_")도 함께 감지한다.
-// (완전한 렌주룰의 "살아있는 3" 판정보다는 단순화된 근사치입니다)
 func countOpenThrees(b *Board, y, x int, stone Stone) int {
 	count := 0
 	for _, d := range directions {
@@ -177,7 +172,6 @@ func countOpenThrees(b *Board, y, x int, stone Stone) int {
 				break
 			}
 		}
-		// 띈3: _SS_S_ / _S_SS_ (길이 6짜리 윈도우)
 		if !found {
 			for i := 0; i+6 <= lineWindowSize; i++ {
 				if win[i] == '_' && win[i+1] == 'S' && win[i+2] == 'S' && win[i+3] == '_' && win[i+4] == 'S' && win[i+5] == '_' {
@@ -198,7 +192,6 @@ func countOpenThrees(b *Board, y, x int, stone Stone) int {
 }
 
 // countFours: (y,x)에 stone을 놓았을 때 만들어지는 "4" 위협 개수.
-// 5칸 윈도우 안에 S가 4개, 빈칸이 1개면 (한 수로 5목 완성 가능) 4로 간주.
 func countFours(b *Board, y, x int, stone Stone) int {
 	count := 0
 	for _, d := range directions {
@@ -227,7 +220,6 @@ func countFours(b *Board, y, x int, stone Stone) int {
 }
 
 // IsForbidden: (y,x)에 stone을 놓는 것이 렌주 금수인지 확인.
-// 전통 렌주룰에 따라 Black에게만 적용됩니다. cfg.Enabled가 false면 항상 false.
 func IsForbidden(b *Board, y, x int, stone Stone, cfg RenjuConfig) bool {
 	if !cfg.Enabled || stone != Black {
 		return false
@@ -241,7 +233,6 @@ func IsForbidden(b *Board, y, x int, stone Stone, cfg RenjuConfig) bool {
 
 	run := maxRunLength(b, y, x, stone)
 
-	// 정확히 5목이면 무조건 승리 - 금수 규칙보다 우선
 	if run == winLength {
 		return false
 	}
@@ -265,12 +256,6 @@ func IsForbidden(b *Board, y, x int, stone Stone, cfg RenjuConfig) bool {
 // ============================================================
 
 // Evaluate: player 관점의 (내 점수 - 상대 점수).
-//
-// 성능 노트: 예전에는 evaluateForStone을 Black/White에 대해 각각 호출했고,
-// 그 안에서 4방향마다 보드 225칸을 전부 스캔했다 (총 2색 x 4방향 = 8회
-// 전체 보드 스캔). 이 함수는 이 트리에서 depth==0인 모든 리프에서 호출되므로
-// 탐색 성능에 가장 직접적인 영향을 준다. 여기서는 방향당 한 번의 스캔에서
-// Black/White 점수를 동시에 누적해서 스캔 횟수를 4회로 절반 줄인다.
 func Evaluate(b *Board, player Stone) int {
 	var blackScore, whiteScore int
 	for _, d := range directions {
@@ -359,13 +344,6 @@ func patternScore(length int, openStart, openEnd bool) int {
 // ============================================================
 
 // GenerateMoves: 기존 돌 주변 radius칸 이내의 빈칸만 후보로 반환 (탐색 범위 축소)
-//
-// 성능 노트: 예전에는 map[[2]int]bool로 중복을 제거했는데, 이 함수가
-// 알파베타 탐색의 "모든 노드"에서 호출되다 보니(리프뿐 아니라 중간 노드까지)
-// map 해싱/할당 비용이 그대로 누적되어 가장 큰 병목이었다. 여기서는 Engine이
-// 들고 있는 고정 크기 bool 배열(visitedBuf)을 재사용해서 할당 없이 O(1)
-// 중복 체크를 한다. 싱글스레드로 순차 탐색하는 현재 구조에서는 버퍼를
-// 공유해도 안전하다(동시에 두 곳에서 쓰지 않음).
 func (e *Engine) GenerateMoves(b *Board, depth int) [][2]int {
 	radius := e.Radius
 	buf := &e.visitedBuf
@@ -423,11 +401,6 @@ func (e *Engine) GenerateMoves(b *Board, depth int) [][2]int {
 
 const winScore = 1_000_000_000
 
-// posInf/negInf: math.MaxInt64/MinInt64 대신 사용하는 안전한 무한대 대용값.
-// MinInt64는 절댓값이 MaxInt64보다 1 커서 -MinInt64 계산 시 오버플로우가 나므로
-// (Go는 정수 오버플로우를 감싸서 값이 조용히 깨짐), 서로 부호만 바꿔도 안전한
-// 대칭적인 큰 값을 사용한다. winScore(1e9)보다 훨씬 크면서 오버플로우 없이
-// 음수로 뒤집을 수 있는 범위 안에 있다.
 const (
 	posInf = 1 << 62
 	negInf = -posInf
@@ -470,7 +443,6 @@ type Engine struct {
 	nodesVisited *int64
 }
 
-// SoftmaxTopPConfig: 최선 수 하나만 고르는 대신 확률적으로 수를 선택할 때 쓰는 설정.
 type SoftmaxTopPConfig struct {
 	Enabled     bool    // false면 기존처럼 argmax(최고 점수)로만 선택
 	Temperature float64 // softmax 온도. 1.0이 기본, 작을수록 최고점 수에 더 쏠림
@@ -478,7 +450,6 @@ type SoftmaxTopPConfig struct {
 	Seed        int64   // 난수 시드 (하드코딩해서 재현 가능하게 사용)
 }
 
-// SetSoftmaxTopP: softmax + top-p 샘플링 설정을 적용하고, Seed로 고정된 rng를 준비한다.
 func (e *Engine) SetSoftmaxTopP(cfg SoftmaxTopPConfig) {
 	e.Softmax = cfg
 	e.rng = rand.New(rand.NewSource(cfg.Seed))
@@ -500,18 +471,14 @@ func NewEngine(cfg RenjuConfig, maxDepth int) *Engine {
 	return e
 }
 
-// budgetExceeded: MaxNodes가 설정되어 있고 이미 그만큼(또는 그 이상) 노드를
-// 방문했으면 true. MaxNodes<=0이면 무제한이라 항상 false.
 func (e *Engine) budgetExceeded() bool {
 	return e.MaxNodes > 0 && atomic.LoadInt64(e.nodesVisited) >= e.MaxNodes
 }
 
-// countNode: 노드 하나를 방문했다고 기록한다 (여러 goroutine이 동시에 호출 가능하므로 atomic).
 func (e *Engine) countNode() {
 	atomic.AddInt64(e.nodesVisited, 1)
 }
 
-// NodesVisited: 이번 탐색에서 실제로 방문한 노드 수 (디버깅/로그용).
 func (e *Engine) NodesVisited() int64 {
 	return atomic.LoadInt64(e.nodesVisited)
 }
@@ -556,7 +523,7 @@ func (e *Engine) FindBestMove(b *Board, player Stone) (int, int, int) {
 			e.hasPV = true
 		}
 		if bestScore >= winScore {
-			break // 이미 강제 승리를 찾았으면 더 깊이 볼 필요 없음
+			break
 		}
 	}
 
@@ -599,14 +566,12 @@ func (e *Engine) searchRoot(b *Board, player Stone, depth int) (int, int, int) {
 	return bestY, bestX, best
 }
 
-// moveResult: 루트의 한 후보 수와 그 수를 뒀을 때의 평가 점수.
 type moveResult struct {
 	y, x, score int
 }
 
 // evaluateRootMoves: 루트의 합법 후보 수 전부에 대해 (병렬로) 점수를 계산해서
 // 리스트로 반환한다. searchRootParallel(argmax 선택)과 searchRootSoftmaxTopP
-// (확률적 선택) 둘 다 이 함수를 공유해서 쓴다.
 func (e *Engine) evaluateRootMoves(b *Board, player Stone, depth int) []moveResult {
 	moves := e.GenerateMoves(b, depth)
 	moves = e.orderMoves(b, moves, player, depth, true)
@@ -706,23 +671,6 @@ func (e *Engine) evaluateRootMoves(b *Board, player Stone, depth int) []moveResu
 
 // searchRootParallel: 루트 후보 수들을 병렬 평가한 뒤, 가장 점수가 높은 수를 고른다
 // (argmax). searchRoot과 결과 자체는 같지만 goroutine으로 나눠서 계산한다.
-//
-// 주의할 점 두 가지:
-//
-//  1. Engine의 GenerateMoves/orderMoves 버퍼(visitedBuf, movesBufs, scoreBufs)는
-//     "싱글스레드 순차 탐색"을 전제로 depth 인덱싱만으로 안전하게 재사용하도록
-//     만들어져 있다. 여러 goroutine이 같은 *Engine을 동시에 쓰면 이 버퍼들에서
-//     데이터 레이스가 난다. 그래서 워커(고루틴)마다 자신만의 *Engine(=자신만의
-//     버퍼)을 새로 만들어 쓴다. Engine 생성 자체는 슬라이스 몇 개 할당하는
-//     가벼운 작업이라 워커 수(보통 CPU 코어 수)만큼만 만들면 비용이 크지 않다.
-//
-//  2. 순수 순차 알파베타는 형제 노드끼리 alpha를 갱신하며 가지치기 효율이
-//     좋아지는데, 동시에 도는 goroutine들은 그 시점의 alpha를 실시간으로
-//     공유하지 못한다. 완전히 무시하면 가지치기가 거의 안 되므로, 대신
-//     "이미 완료된 형제 수의 점수 중 최댓값"을 atomic 변수로 공유해서,
-//     새로 시작하는 워커가 그 값을 초기 alpha로 사용하게 한다. 이미 실제로
-//     달성 가능한 것으로 확인된 점수이므로 최적성을 해치지 않는 안전한
-//     하한선이며, 동시성 오버헤드도 거의 없다(락 없는 CAS 루프).
 func (e *Engine) searchRootParallel(b *Board, player Stone, depth int) (int, int, int) {
 	results := e.evaluateRootMoves(b, player, depth)
 	if len(results) == 0 {
@@ -875,17 +823,6 @@ func (e *Engine) alphabeta(b *Board, depth int, alpha, beta int, player Stone) i
 
 // orderMoves: 각 후보 수를 놓아봤을 때의 즉석 점수(연속 길이)로 정렬해서
 // 알파베타 가지치기 효율을 높임.
-//
-// 성능 노트: 예전에는 (a) 매 노드마다 scored 슬라이스를 새로 make()하고,
-// (b) sort.Slice(리플렉션 기반)로 정렬한 뒤, (c) 결과를 담을 슬라이스를
-// 또 make()해서 복사했다. 노드 수가 많은 알파베타에서 이 세 번의 할당이
-// 누적되어 GC 부담이 컸다. 여기서는 depth별로 재사용하는 점수 버퍼만 새로
-// 채우고, moves 슬라이스(=e.GenerateMoves가 depth별 버퍼에서 반환한 것)를
-// moveScoreOrder를 통해 제자리에서(in-place) 정렬한다. 추가 할당 없음.
-// isRoot: true면 이 정렬이 루트(현재 depth 반복의 첫 수 선택) 국면에서
-// 호출된 것으로 간주해, iterative deepening의 직전 depth가 찾은 PV 수를
-// 최우선 순위로 끌어올린다. 내부(재귀) 노드에서는 pvMove가 그 국면과
-// 무관한 좌표일 수 있으므로 적용하지 않는다.
 func (e *Engine) orderMoves(b *Board, moves [][2]int, player Stone, depth int, isRoot bool) [][2]int {
 	scores := e.scoreBufs[depth][:0]
 	for _, m := range moves {
@@ -938,11 +875,342 @@ func printBoard(b *Board) {
 }
 
 // ============================================================
-// HTTP API (SolidJS 프론트엔드용)
+// 게임 세션 (서버가 게임의 모든 상태를 관리)
 // ============================================================
 
-// RenjuConfigDTO: 요청에서 렌주 규칙을 선택적으로 오버라이드할 때 사용.
-// 필드를 생략하면(=nil) 서버 기본값(DefaultRenjuConfig)을 사용합니다.
+// isBoardFull: 보드에 빈 칸이 하나도 없으면 true (무승부 판정용)
+func isBoardFull(b *Board) bool {
+	for y := 0; y < boardSize; y++ {
+		for x := 0; x < boardSize; x++ {
+			if b.Get(y, x) == Empty {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+type GameStatus string
+
+const (
+	StatusPlaying GameStatus = "playing"
+	StatusWin     GameStatus = "win"
+	StatusDraw    GameStatus = "draw"
+)
+
+// MoveRecord: 기보(복기) 한 수. 웹은 게임이 끝나면 History를 통째로 들고 있다가
+// 서버 통신 없이 로컬에서 복기를 재생한다.
+type MoveRecord struct {
+	Row   int   `json:"row"`
+	Col   int   `json:"col"`
+	Color Stone `json:"color"`
+}
+
+// GameSession: 게임 하나의 전체 상태. 이제 웹이 아니라 서버가 이 상태의
+// 유일한 소유자다. 웹은 항상 이 상태의 스냅샷(GameStateDTO)만 받아서 그린다.
+type GameSession struct {
+	ID        string
+	Board     *Board
+	Turn      Stone
+	Config    RenjuConfig
+	Depth     int
+	MaxNodes  int64
+	History   []MoveRecord
+	Status    GameStatus
+	Winner    Stone // Status == StatusWin일 때만 의미 있음
+	CreatedAt time.Time
+}
+
+// GameStateDTO: 클라이언트에 내려주는 게임 상태 스냅샷.
+type GameStateDTO struct {
+	GameID         string       `json:"gameId"`
+	Board          [][]int      `json:"board"`
+	Turn           int          `json:"turn"`
+	Status         string       `json:"status"`
+	Winner         int          `json:"winner,omitempty"`
+	History        []MoveRecord `json:"history"`
+	ForbiddenMoves [][2]int     `json:"forbiddenMoves"`
+}
+
+func boardToDTO(b *Board) [][]int {
+	out := make([][]int, boardSize)
+	for y := 0; y < boardSize; y++ {
+		out[y] = make([]int, boardSize)
+		for x := 0; x < boardSize; x++ {
+			out[y][x] = int(b.Get(y, x))
+		}
+	}
+	return out
+}
+
+// toDTO: 현재 세션 상태를 JSON 응답용 스냅샷으로 변환.
+// 흑 차례이고 렌주룰이 켜져 있을 때만 금수 좌표 목록을 계산해서 함께 내려준다
+// (예전에는 웹의 engine.ts가 매 렌더마다 이걸 직접 계산했는데, 이제 서버가
+// 유일한 판정 주체이므로 여기서 계산해서 내려준다).
+func (g *GameSession) toDTO() GameStateDTO {
+	forbidden := make([][2]int, 0)
+	if g.Status == StatusPlaying && g.Turn == Black && g.Config.Enabled {
+		for y := 0; y < boardSize; y++ {
+			for x := 0; x < boardSize; x++ {
+				if g.Board.Get(y, x) == Empty && IsForbidden(g.Board, y, x, Black, g.Config) {
+					forbidden = append(forbidden, [2]int{y, x})
+				}
+			}
+		}
+	}
+	history := g.History
+	if history == nil {
+		history = []MoveRecord{}
+	}
+	return GameStateDTO{
+		GameID:         g.ID,
+		Board:          boardToDTO(g.Board),
+		Turn:           int(g.Turn),
+		Status:         string(g.Status),
+		Winner:         int(g.Winner),
+		History:        history,
+		ForbiddenMoves: forbidden,
+	}
+}
+
+// ============================================================
+// 요청 큐: 서버가 관리하는 모든 게임에 대한 모든 요청을 전역으로 하나씩 처리한다.
+//
+// 왜 게임별이 아니라 전역 큐인가: 최선수 계산(alphabeta)이 이미 GOMAXPROCS만큼
+// goroutine을 띄워 논리 프로세서를 전부 끌어다 쓰는 구조다(evaluateRootMoves 참고).
+// 그래서 서로 다른 게임의 최선수 요청을 "동시에" 처리하게 두면 두 계산이 같은
+// 코어들을 두고 경쟁만 하게 되어 오히려 둘 다 느려진다. 요청 종류/게임 ID에
+// 상관없이 워커 하나가 순차적으로 처리하게 하면, 한 번에 하나의 계산만
+// 논리 프로세서 전체를 온전히 쓸 수 있다.
+//
+// 클라이언트는 큐에 들어간 요청이 처리를 마칠 때까지 HTTP 응답을 기다린다
+// (동기 응답). 워커가 하나뿐이므로 게임 상태(map, 각 GameSession) 자체에는
+// 별도의 락이 필요 없다 - 오직 이 워커 goroutine만 상태를 읽고 쓴다.
+// ============================================================
+
+type jobKind int
+
+const (
+	jobCreateGame jobKind = iota
+	jobGetState
+	jobPlaceMove
+	jobBestMove
+)
+
+type job struct {
+	kind     jobKind
+	gameID   string
+	renjuCfg *RenjuConfig
+	depth    int
+	maxNodes int64
+	row, col int
+	place    bool
+
+	resp chan jobResult
+}
+
+type jobResult struct {
+	state       GameStateDTO
+	bestY       int
+	bestX       int
+	bestScore   int
+	hasBestMove bool
+	err         error
+}
+
+type GameManager struct {
+	games map[string]*GameSession
+	queue chan job
+}
+
+func NewGameManager() *GameManager {
+	m := &GameManager{
+		games: make(map[string]*GameSession),
+		queue: make(chan job, 256),
+	}
+	go m.run()
+	return m
+}
+
+func (m *GameManager) run() {
+	for j := range m.queue {
+		m.process(j)
+	}
+}
+
+// submit: 요청을 큐에 넣고 워커가 처리를 마칠 때까지 블로킹으로 기다린다.
+func (m *GameManager) submit(j job) jobResult {
+	j.resp = make(chan jobResult, 1)
+	m.queue <- j
+	return <-j.resp
+}
+
+func newGameID() string {
+	buf := make([]byte, 8)
+	if _, err := cryptorand.Read(buf); err != nil {
+		// crypto/rand 실패는 사실상 일어나지 않지만 방어적으로 시간 기반 fallback을 둔다.
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(buf)
+}
+
+func (m *GameManager) process(j job) {
+	switch j.kind {
+	case jobCreateGame:
+		m.handleCreateGame(j)
+	case jobGetState:
+		m.handleGetState(j)
+	case jobPlaceMove:
+		m.handlePlaceMove(j)
+	case jobBestMove:
+		m.handleBestMove(j)
+	}
+}
+
+func (m *GameManager) handleCreateGame(j job) {
+	cfg := DefaultRenjuConfig()
+	if j.renjuCfg != nil {
+		cfg = *j.renjuCfg
+	}
+	depth := defaultSearchDepth
+	if j.depth > 0 {
+		depth = j.depth
+	}
+	maxNodes := int64(defaultMaxNodes)
+	if j.maxNodes > 0 {
+		maxNodes = j.maxNodes
+	}
+
+	g := &GameSession{
+		ID:        newGameID(),
+		Board:     NewBoard(),
+		Turn:      Black,
+		Config:    cfg,
+		Depth:     depth,
+		MaxNodes:  maxNodes,
+		Status:    StatusPlaying,
+		CreatedAt: time.Now(),
+	}
+	m.games[g.ID] = g
+	j.resp <- jobResult{state: g.toDTO()}
+}
+
+func (m *GameManager) lookup(gameID string) (*GameSession, error) {
+	g, ok := m.games[gameID]
+	if !ok {
+		return nil, fmt.Errorf("게임을 찾을 수 없습니다: %s", gameID)
+	}
+	return g, nil
+}
+
+func (m *GameManager) handleGetState(j job) {
+	g, err := m.lookup(j.gameID)
+	if err != nil {
+		j.resp <- jobResult{err: err}
+		return
+	}
+	j.resp <- jobResult{state: g.toDTO()}
+}
+
+func (m *GameManager) handlePlaceMove(j job) {
+	g, err := m.lookup(j.gameID)
+	if err != nil {
+		j.resp <- jobResult{err: err}
+		return
+	}
+	if err := applyMove(g, j.row, j.col, g.Turn); err != nil {
+		j.resp <- jobResult{err: err}
+		return
+	}
+	j.resp <- jobResult{state: g.toDTO()}
+}
+
+func (m *GameManager) handleBestMove(j job) {
+	g, err := m.lookup(j.gameID)
+	if err != nil {
+		j.resp <- jobResult{err: err}
+		return
+	}
+	if g.Status != StatusPlaying {
+		j.resp <- jobResult{err: fmt.Errorf("이미 종료된 게임입니다")}
+		return
+	}
+
+	engine := NewEngine(g.Config, g.Depth)
+	engine.SetSoftmaxTopP(SoftmaxTopPConfig{
+		Enabled:     true,
+		Temperature: 0.1,
+		TopP:        0.9,
+		Seed:        42,
+	})
+	engine.MaxNodes = g.MaxNodes
+	y, x, score := engine.FindBestMove(g.Board, g.Turn)
+
+	if y == -1 {
+		// 둘 수 있는 합법 수가 없는 극단적인 경우 -> 무승부로 종료
+		g.Status = StatusDraw
+		j.resp <- jobResult{state: g.toDTO()}
+		return
+	}
+
+	if !j.place {
+		// place=false: 실제로 두지 않고 추천 좌표만 응답
+		j.resp <- jobResult{state: g.toDTO(), bestY: y, bestX: x, bestScore: score, hasBestMove: true}
+		return
+	}
+
+	if err := applyMove(g, y, x, g.Turn); err != nil {
+		j.resp <- jobResult{err: err}
+		return
+	}
+	j.resp <- jobResult{state: g.toDTO(), bestY: y, bestX: x, bestScore: score, hasBestMove: true}
+}
+
+// applyMove: 검증(범위/중복/금수/게임 종료 여부) 후 실제로 착수하고,
+// 승리/무승부/턴 전환까지 반영한다. 워커 goroutine에서만 호출되므로 락이 필요 없다.
+func applyMove(g *GameSession, y, x int, color Stone) error {
+	if g.Status != StatusPlaying {
+		return fmt.Errorf("이미 종료된 게임입니다")
+	}
+	if !inBounds(y, x) {
+		return fmt.Errorf("보드 범위를 벗어났습니다: (%d, %d)", y, x)
+	}
+	if g.Board.Get(y, x) != Empty {
+		return fmt.Errorf("이미 돌이 있는 자리입니다: (%d, %d)", y, x)
+	}
+	if IsForbidden(g.Board, y, x, color, g.Config) {
+		return fmt.Errorf("렌주 금수 자리입니다: (%d, %d)", y, x)
+	}
+
+	g.Board.Set(y, x, color)
+	g.History = append(g.History, MoveRecord{Row: y, Col: x, Color: color})
+
+	if CheckWinAt(g.Board, y, x, color) {
+		g.Status = StatusWin
+		g.Winner = color
+		return nil
+	}
+	if isBoardFull(g.Board) {
+		g.Status = StatusDraw
+		return nil
+	}
+	g.Turn = opponent(color)
+	return nil
+}
+
+// ============================================================
+// HTTP API (SolidJS 프론트엔드용)
+//
+//   POST /api/games              게임 생성 (렌주룰 설정 포함) -> gameId + 초기 상태
+//   GET  /api/games/{id}         현재 게임 상태 조회
+//   POST /api/games/{id}/move    사람 플레이어 착수 { row, col }
+//   POST /api/games/{id}/best-move  최선수 요청 { place: bool }
+//                                 place=true  -> 서버가 실제로 두고 상태 반환
+//                                 place=false -> 좌표만 추천, 상태는 그대로
+// ============================================================
+
+// RenjuConfigDTO: 게임 생성 요청에서 렌주 규칙을 선택적으로 오버라이드할 때 사용.
+// 생략하면(=nil) 서버 기본값(DefaultRenjuConfig)을 사용합니다.
 type RenjuConfigDTO struct {
 	Enabled           bool `json:"enabled"`
 	ForbidDoubleThree bool `json:"forbidDoubleThree"`
@@ -950,48 +1218,39 @@ type RenjuConfigDTO struct {
 	ForbidOverline    bool `json:"forbidOverline"`
 }
 
-// BestMoveRequest: SolidJS 쪽에서 보내는 요청 바디.
-// board: 15x15 2차원 배열, 0=Empty, 1=Black, 2=White (Stone enum과 값이 동일)
-// player: 최선의 수를 찾을 대상 색상 (1=Black, 2=White)
-type BestMoveRequest struct {
-	Board    [boardSize][boardSize]int `json:"board"`
-	Player   int                       `json:"player"`
-	Depth    int                       `json:"depth,omitempty"`    // 생략 시 서버 기본값 사용
-	Renju    *RenjuConfigDTO           `json:"renju,omitempty"`    // 생략 시 서버 기본값 사용
-	MaxNodes int64                     `json:"maxNodes,omitempty"` // 생략(0) 시 무제한. 이 노드 수를 넘으면 그때까지의 결과만으로 응답.
+type ErrorDTO struct {
+	Error string `json:"error"`
 }
 
-type BestMoveResponse struct {
-	Y            int    `json:"y"`
-	X            int    `json:"x"`
-	Score        int    `json:"score"`
-	NoMove       bool   `json:"noMove"` // true면 둘 수 있는 합법 수가 없음
-	NodesVisited int64  `json:"nodesVisited"`
-	Error        string `json:"error,omitempty"`
+type BestMoveDTO struct {
+	GameStateDTO
+	Move *MoveDTO `json:"move,omitempty"`
+}
+
+type MoveDTO struct {
+	Y     int `json:"y"`
+	X     int `json:"x"`
+	Score int `json:"score"`
 }
 
 const defaultSearchDepth = 6
 const defaultMaxNodes = 20000000
 
-func requestToBoard(req *BestMoveRequest) (*Board, error) {
-	b := NewBoard()
-	for y := 0; y < boardSize; y++ {
-		for x := 0; x < boardSize; x++ {
-			v := req.Board[y][x]
-			if v != int(Empty) && v != int(Black) && v != int(White) {
-				return nil, fmt.Errorf("board[%d][%d] 값이 올바르지 않습니다: %d (0=빈칸,1=흑,2=백만 허용)", y, x, v)
-			}
-			b.Set(y, x, Stone(v))
-		}
-	}
-	return b, nil
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+func writeJSONError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, ErrorDTO{Error: msg})
 }
 
 // withCORS: SolidJS 개발 서버(다른 포트)에서의 fetch를 허용.
 func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 		if r.Method == http.MethodOptions {
@@ -1002,79 +1261,108 @@ func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func writeJSONError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(BestMoveResponse{Error: msg})
+func handleCreateGame(m *GameManager) http.HandlerFunc {
+	type reqBody struct {
+		Renju    *RenjuConfigDTO `json:"renju,omitempty"`
+		Depth    int             `json:"depth,omitempty"`
+		MaxNodes int64           `json:"maxNodes,omitempty"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body reqBody
+		if r.Body != nil && r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeJSONError(w, http.StatusBadRequest, "요청 JSON 파싱 실패: "+err.Error())
+				return
+			}
+		}
+
+		var cfg *RenjuConfig
+		if body.Renju != nil {
+			cfg = &RenjuConfig{
+				Enabled:           body.Renju.Enabled,
+				ForbidDoubleThree: body.Renju.ForbidDoubleThree,
+				ForbidDoubleFour:  body.Renju.ForbidDoubleFour,
+				ForbidOverline:    body.Renju.ForbidOverline,
+			}
+		}
+
+		result := m.submit(job{kind: jobCreateGame, renjuCfg: cfg, depth: body.Depth, maxNodes: body.MaxNodes})
+		writeJSON(w, http.StatusOK, result.state)
+	}
 }
 
-func handleBestMove(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "POST만 허용됩니다")
-		return
-	}
-
-	var req BestMoveRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "요청 JSON 파싱 실패: "+err.Error())
-		return
-	}
-
-	if req.Player != int(Black) && req.Player != int(White) {
-		writeJSONError(w, http.StatusBadRequest, "player는 1(Black) 또는 2(White)여야 합니다")
-		return
-	}
-
-	board, err := requestToBoard(&req)
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	cfg := DefaultRenjuConfig()
-	if req.Renju != nil {
-		cfg = RenjuConfig{
-			Enabled:           req.Renju.Enabled,
-			ForbidDoubleThree: req.Renju.ForbidDoubleThree,
-			ForbidDoubleFour:  req.Renju.ForbidDoubleFour,
-			ForbidOverline:    req.Renju.ForbidOverline,
+func handleGetState(m *GameManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		gameID := r.PathValue("id")
+		result := m.submit(job{kind: jobGetState, gameID: gameID})
+		if result.err != nil {
+			writeJSONError(w, http.StatusNotFound, result.err.Error())
+			return
 		}
+		writeJSON(w, http.StatusOK, result.state)
 	}
+}
 
-	depth := defaultSearchDepth
-	if req.Depth > 0 {
-		depth = req.Depth
+func handlePlaceMove(m *GameManager) http.HandlerFunc {
+	type reqBody struct {
+		Row int `json:"row"`
+		Col int `json:"col"`
 	}
-
-	engine := NewEngine(cfg, depth)
-	engine.SetSoftmaxTopP(SoftmaxTopPConfig{
-		Enabled:     true,
-		Temperature: 0.4,
-		TopP:        0.9,
-		Seed:        42,
-	})
-	engine.MaxNodes = defaultMaxNodes
-	y, x, score := engine.FindBestMove(board, Stone(req.Player))
-
-	w.Header().Set("Content-Type", "application/json")
-
-	if y == -1 {
-		// 합법적으로 둘 수 있는 곳이 없는 극단적인 경우
-		json.NewEncoder(w).Encode(BestMoveResponse{NoMove: true, NodesVisited: engine.NodesVisited()})
-		return
+	return func(w http.ResponseWriter, r *http.Request) {
+		gameID := r.PathValue("id")
+		var body reqBody
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "요청 JSON 파싱 실패: "+err.Error())
+			return
+		}
+		result := m.submit(job{kind: jobPlaceMove, gameID: gameID, row: body.Row, col: body.Col})
+		if result.err != nil {
+			writeJSONError(w, http.StatusBadRequest, result.err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result.state)
 	}
+}
 
-	json.NewEncoder(w).Encode(BestMoveResponse{Y: y, X: x, Score: score, NodesVisited: engine.NodesVisited()})
+func handleBestMove(m *GameManager) http.HandlerFunc {
+	type reqBody struct {
+		Place bool `json:"place"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		gameID := r.PathValue("id")
+		var body reqBody
+		if r.Body != nil && r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeJSONError(w, http.StatusBadRequest, "요청 JSON 파싱 실패: "+err.Error())
+				return
+			}
+		}
+		result := m.submit(job{kind: jobBestMove, gameID: gameID, place: body.Place})
+		if result.err != nil {
+			writeJSONError(w, http.StatusBadRequest, result.err.Error())
+			return
+		}
+		dto := BestMoveDTO{GameStateDTO: result.state}
+		if result.hasBestMove {
+			dto.Move = &MoveDTO{Y: result.bestY, X: result.bestX, Score: result.bestScore}
+		}
+		writeJSON(w, http.StatusOK, dto)
+	}
 }
 
 func main() {
 	port := 8090
+	manager := NewGameManager()
 
-	http.HandleFunc("/api/best-move", withCORS(handleBestMove))
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/games", handleCreateGame(manager))
+	mux.HandleFunc("GET /api/games/{id}", handleGetState(manager))
+	mux.HandleFunc("POST /api/games/{id}/move", handlePlaceMove(manager))
+	mux.HandleFunc("POST /api/games/{id}/best-move", handleBestMove(manager))
 
 	addr := fmt.Sprintf(":%d", port)
 	fmt.Println("Server is running on port " + addr + "...")
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	if err := http.ListenAndServe(addr, withCORS(mux.ServeHTTP)); err != nil {
 		log.Fatalf("Failed to run server: %v\n", err)
 	}
 }

@@ -1,5 +1,5 @@
 export type Stone = 0 | 1 | 2;
-export type Board = Stone[][];
+export type ApiBoard = Stone[][];
 
 export interface RenjuConfig {
   enabled: boolean;
@@ -8,38 +8,77 @@ export interface RenjuConfig {
   forbidOverline: boolean;
 }
 
-interface BestMoveRequest {
-  board: Board;
-  player: 1 | 2;
-  renju?: RenjuConfig;
+export type GameStatus = "playing" | "win" | "draw";
+
+export interface MoveRecord {
+  row: number;
+  col: number;
+  color: Stone;
 }
 
-interface BestMoveResponse {
-  y: number;
-  x: number;
-  score: number;
-  noMove?: boolean;
-  nodesVisited: number;
-  error?: string;
+export interface GameState {
+  gameId: string;
+  board: ApiBoard;
+  turn: Stone;
+  status: GameStatus;
+  winner?: Stone;
+  history: MoveRecord[];
+  forbiddenMoves: [number, number][];
 }
 
-export async function getBestMove(
-  board: Board,
-  player: 1 | 2,
-  options?: { renju?: RenjuConfig; },
-  lastMove?: { row: number; col: number },
-): Promise<BestMoveResponse> {
-  console.log(player, " request")
-  const res = await fetch(`${location.origin}/api/best-move`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ board, player, options, lastMove }),
-  });
+export interface BestMoveResult extends GameState {
+  move?: { y: number; x: number; score: number };
+}
 
+const BASE_URL = `${location.origin}/api/games`;
+
+async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error ?? `서버 에러: ${res.status}`);
   }
-
   return res.json();
+}
+
+export async function createGame(options?: {
+  renju?: RenjuConfig;
+  depth?: number;
+  maxNodes?: number;
+}): Promise<GameState> {
+  const res = await fetch(BASE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options ?? {}),
+  });
+  return handleResponse<GameState>(res);
+}
+
+export async function getGameState(gameId: string): Promise<GameState> {
+  const res = await fetch(`${BASE_URL}/${gameId}`);
+  return handleResponse<GameState>(res);
+}
+
+export async function placeMove(
+  gameId: string,
+  row: number,
+  col: number,
+): Promise<GameState> {
+  const res = await fetch(`${BASE_URL}/${gameId}/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ row, col }),
+  });
+  return handleResponse<GameState>(res);
+}
+
+export async function requestBestMove(
+  gameId: string,
+  place: boolean,
+): Promise<BestMoveResult> {
+  const res = await fetch(`${BASE_URL}/${gameId}/best-move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ place }),
+  });
+  return handleResponse<BestMoveResult>(res);
 }

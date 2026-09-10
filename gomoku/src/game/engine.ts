@@ -45,8 +45,6 @@ export function isBoardFull(board: Board): boolean {
   return board.every((row) => row.every((cell) => cell !== null));
 }
 
-// 렌주룰
-
 function getLineLength(board: Board, row: number, col: number, dr: number, dc: number, color: Stone): number {
   return 1 + countDir(board, row, col, dr, dc, color) + countDir(board, row, col, -dr, -dc, color);
 }

@@ -1,32 +1,39 @@
-import { createEffect, createMemo, createSignal, Show, For, untrack } from "solid-js";
-import { createStore, unwrap } from "solid-js/store";
+import { createEffect, createMemo, createSignal, Show, For } from "solid-js";
 import {
   BOARD_SIZE,
   type Stone,
   type Board,
   createEmptyBoard,
-  checkWin,
-  isBoardFull,
-  isForbidden,
   getForbiddenMoves,
 } from "../game/engine";
-import { getBestMove } from "../game/api";
+import {
+  createGame,
+  placeMove,
+  requestBestMove,
+  type GameState,
+  type GameStatus,
+  type RenjuConfig,
+  type Stone as ApiStone,
+} from "../game/api";
 
 type Move = { row: number; col: number; color: Stone };
 type GameMode = "black" | "white" | "ai-vs-ai" | null;
 
-function toApiStone(color: Stone): 1 | 2 {
-  return color === "black" ? 1 : 2;
+const DEFAULT_RENJU: RenjuConfig = {
+  enabled: true,
+  forbidDoubleThree: true,
+  forbidDoubleFour: true,
+  forbidOverline: true,
+};
+
+function fromApiStone(v: ApiStone): Stone {
+  if (v === 1) return "black";
+  if (v === 2) return "white";
+  return null;
 }
 
-function toApiBoard(board: Board): (0 | 1 | 2)[][] {
-  return board.map((row) =>
-    row.map((cell) => {
-      if (cell === "black") return 1;
-      if (cell === "white") return 2;
-      return 0;
-    }),
-  );
+function fromApiBoard(board: ApiStone[][]): Board {
+  return board.map((row) => row.map(fromApiStone));
 }
 
 function isAiTurn(mode: GameMode, turn: Stone): boolean {
@@ -37,122 +44,127 @@ function isAiTurn(mode: GameMode, turn: Stone): boolean {
 }
 
 export default function Game() {
-  const [board, setBoard] = createStore<Board>(createEmptyBoard());
+  const [gameId, setGameId] = createSignal<string | null>(null);
+  const [board, setBoard] = createSignal<Board>(createEmptyBoard());
   const [mode, setMode] = createSignal<GameMode>(null);
   const [currentTurn, setCurrentTurn] = createSignal<Stone>("black");
+  const [status, setStatus] = createSignal<GameStatus>("playing");
   const [winner, setWinner] = createSignal<Stone | "draw" | null>(null);
-  const [thinking, setThinking] = createSignal(false);
-  const [aiError, setAiError] = createSignal<string | null>(null);
+  const [forbiddenPoints, setForbiddenPoints] = createSignal<
+    [number, number][]
+  >([]);
   const [moveHistory, setMoveHistory] = createSignal<Move[]>([]);
+
+  const [starting, setStarting] = createSignal(false);
+  const [thinking, setThinking] = createSignal(false);
+  const [moveError, setMoveError] = createSignal<string | null>(null);
   const [isReviewing, setIsReviewing] = createSignal(false);
 
-  const [gameId, setGameId] = createSignal(0);
+  const forbiddenSet = createMemo(
+    () => new Set(forbiddenPoints().map(([r, c]) => `${r}-${c}`)),
+  );
 
-  // 대국 중 흑돌 차례일 때 금수 위치 계산
-  const forbiddenSet = createMemo(() => {
-    if (currentTurn() !== "black" || winner()) return new Set<string>();
-    const plainBoard = board.map((row) => [...row]);
-    return getForbiddenMoves(plainBoard);
-  });
-
-  function placeStone(row: number, col: number, color: Stone) {
-    if (board[row][col] !== null || winner()) return;
-    setBoard(row, col, color);
-    setMoveHistory((h) => [...h, { row, col, color }]);
-
-    if (checkWin(unwrap(board), row, col, color)) {
-      setWinner(color);
-      return;
-    }
-    if (isBoardFull(unwrap(board))) {
+  function applyState(state: GameState) {
+    setBoard(fromApiBoard(state.board));
+    setCurrentTurn(fromApiStone(state.turn));
+    setStatus(state.status);
+    if (state.status === "draw") {
       setWinner("draw");
-      return;
+    } else if (state.status === "win") {
+      setWinner(fromApiStone(state.winner ?? 0));
+    } else {
+      setWinner(null);
     }
-    setCurrentTurn(color === "black" ? "white" : "black");
+    setMoveHistory(
+      state.history.map((m) => ({
+        row: m.row,
+        col: m.col,
+        color: fromApiStone(m.color),
+      })),
+    );
+    setForbiddenPoints(state.forbiddenMoves);
+  }
+
+  async function selectMode(m: GameMode) {
+    setStarting(true);
+    setMoveError(null);
+    try {
+      const state = await createGame({ renju: DEFAULT_RENJU });
+      setGameId(state.gameId);
+      applyState(state);
+      setMode(m);
+    } catch (e) {
+      setMoveError(e instanceof Error ? e.message : "게임 시작 실패");
+    } finally {
+      setStarting(false);
+    }
   }
 
   function handleCellClick(row: number, col: number) {
     const m = mode();
-    if (!m || m === "ai-vs-ai" || winner() || thinking()) return;
+    const id = gameId();
+    if (!m || m === "ai-vs-ai" || !id) return;
+    if (status() !== "playing" || thinking()) return;
     if (currentTurn() !== m) return;
 
-    // 흑돌 착수 시 금수 자리는 착수 불가
-    if (
-      m === "black" &&
-      isForbidden(
-        board.map((r) => [...r]),
-        row,
-        col,
-      )
-    )
-      return;
-
-    placeStone(row, col, m);
+    setMoveError(null);
+    placeMove(id, row, col)
+      .then((state) => {
+        if (gameId() !== id) return;
+        applyState(state);
+      })
+      .catch((e) => {
+        if (gameId() !== id) return;
+        setMoveError(e instanceof Error ? e.message : "착수 실패");
+      });
   }
 
   createEffect(() => {
     const m = mode();
+    const id = gameId();
     const turn = currentTurn();
-    const myGameId = gameId();
 
-    if (!m || winner() || !isAiTurn(m, turn)) return;
+    if (!m || !id || status() !== "playing" || !isAiTurn(m, turn)) return;
 
     setThinking(true);
-    setAiError(null);
+    setMoveError(null);
 
-    const lastMove = untrack(() => moveHistory().at(-1));
-
-    getBestMove(
-      toApiBoard(unwrap(board)),
-      toApiStone(turn),
-      {
-      renju: {
-        enabled: true,
-        forbidDoubleThree: true,
-        forbidDoubleFour: true,
-        forbidOverline: true,
-      }},
-      lastMove)
-      .then((result) => {
-        if (gameId() !== myGameId) return;
-
-        if (result.noMove) {
-          setWinner("draw");
-          return;
-        }
-        placeStone(result.y, result.x, turn);
+    requestBestMove(id, true)
+      .then((state) => {
+        if (gameId() !== id) return;
+        applyState(state);
       })
       .catch((e) => {
-        if (gameId() !== myGameId) return;
-        setAiError(e instanceof Error ? e.message : "엔진 요청 실패");
+        if (gameId() !== id) return;
+        setMoveError(e instanceof Error ? e.message : "엔진 요청 실패");
       })
       .finally(() => {
-        if (gameId() !== myGameId) return;
+        if (gameId() !== id) return;
         setThinking(false);
       });
   });
 
-  function selectMode(m: GameMode) {
-    setMode(m);
-    setCurrentTurn("black");
-  }
-
   function restart() {
-    setGameId((id) => id + 1);
+    setGameId(null);
     setBoard(createEmptyBoard());
     setMode(null);
     setCurrentTurn("black");
+    setStatus("playing");
     setWinner(null);
-    setThinking(false);
-    setAiError(null);
+    setForbiddenPoints([]);
     setMoveHistory([]);
+    setThinking(false);
+    setMoveError(null);
     setIsReviewing(false);
   }
 
   return (
     <div class="game">
       <div class="home__board-overlay" />
-      <Show when={mode()} fallback={<ModeSelect onSelect={selectMode} />}>
+      <Show
+        when={mode()}
+        fallback={<ModeSelect onSelect={selectMode} starting={starting()} />}
+      >
         <Show
           when={!isReviewing()}
           fallback={
@@ -169,11 +181,11 @@ export default function Game() {
               thinking={thinking()}
               winner={winner()}
             />
-            <Show when={aiError()}>
-              <p class="ai-error">{aiError()}</p>
+            <Show when={moveError()}>
+              <p class="ai-error">{moveError()}</p>
             </Show>
             <BoardView
-              board={board}
+              board={board()}
               onCellClick={handleCellClick}
               forbiddenSet={forbiddenSet()}
             />
@@ -213,7 +225,10 @@ export default function Game() {
   );
 }
 
-function ModeSelect(props: { onSelect: (m: GameMode) => void }) {
+function ModeSelect(props: {
+  onSelect: (m: GameMode) => void;
+  starting: boolean;
+}) {
   return (
     <div class="color-select">
       <h2 class="color-select__title">대국 방식을 선택하세요</h2>
@@ -221,6 +236,7 @@ function ModeSelect(props: { onSelect: (m: GameMode) => void }) {
         <button
           type="button"
           class="color-select__btn"
+          disabled={props.starting}
           onClick={() => props.onSelect("black")}
         >
           <span class="stone stone--black" />
@@ -229,6 +245,7 @@ function ModeSelect(props: { onSelect: (m: GameMode) => void }) {
         <button
           type="button"
           class="color-select__btn"
+          disabled={props.starting}
           onClick={() => props.onSelect("white")}
         >
           <span class="stone stone--white" />
@@ -237,6 +254,7 @@ function ModeSelect(props: { onSelect: (m: GameMode) => void }) {
         <button
           type="button"
           class="color-select__btn"
+          disabled={props.starting}
           onClick={() => props.onSelect("ai-vs-ai")}
         >
           <span class="color-select__pair">
@@ -246,7 +264,9 @@ function ModeSelect(props: { onSelect: (m: GameMode) => void }) {
           엔진끼리 대국 관전
         </button>
       </div>
-      <p class="color-select__hint">흑돌이 먼저 둡니다</p>
+      <p class="color-select__hint">
+        {props.starting ? "게임을 생성하는 중입니다..." : "흑돌이 먼저 둡니다"}
+      </p>
     </div>
   );
 }
@@ -342,10 +362,8 @@ function ReplayView(props: { history: Move[]; onExit: () => void }) {
     return b;
   });
 
-  // 복기 단계에서 다음 둘 차례 계산 (0수, 2수, 4수... = 흑 차례)
   const currentTurn = () => (step() % 2 === 0 ? "black" : "white");
 
-  // 복기 중 흑 차례일 때만 금수 위치 계산
   const forbiddenSet = createMemo(() => {
     if (currentTurn() !== "black" || step() >= props.history.length) {
       return new Set<string>();
