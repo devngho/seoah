@@ -6,7 +6,8 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class Config(
     val logging: LoggingConfig,
-    val lmConfig: LMConfig
+    val lmConfig: LMConfig,
+    val discord: DiscordConfig
 )
 
 @Serializable
@@ -16,6 +17,13 @@ data class LoggingConfig(
 
 @Serializable
 data class LMConfig(
+    val provider: String,
     val apiKey: String,
-    val model: String
+    val model: String,
+    val etc: Map<String, String> = emptyMap()
+)
+
+@Serializable
+data class DiscordConfig(
+    val token: String,
 )

@@ -2,6 +2,7 @@ plugins {
     kotlin("jvm") version "2.4.20"
     kotlin("plugin.serialization") version "2.4.20"
     id("io.insert-koin.compiler.plugin") version "1.2.1"
+    application
 }
 
 group = "io.github.devngho"
@@ -23,7 +24,13 @@ dependencies {
     implementation("io.github.oshai:kotlin-logging-jvm:8.0.4")
     implementation("org.slf4j:slf4j-simple:2.0.19")
 
+    implementation("com.google.genai:google-genai:1.76.0")
+
     testImplementation(kotlin("test"))
+}
+
+application {
+    mainClass = "io.github.devngho.seoah.MainKt"
 }
 
 kotlin {
