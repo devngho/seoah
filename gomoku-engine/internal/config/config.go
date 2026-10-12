@@ -15,3 +15,10 @@ const (
 	PosInf = 1 << 62
 	NegInf = -PosInf
 )
+
+const (
+	DefaultSoftmaxEnabled     = true
+	DefaultSoftmaxTemperature = 0.1
+	DefaultSoftmaxTopP        = 0.9
+	DefaultSoftmaxSeed        = 42
+)

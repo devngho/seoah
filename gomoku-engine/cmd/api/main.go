@@ -52,6 +52,7 @@ func decodeBody(r *http.Request, dst interface{}) error {
 func handleCreateGame(m *game.GameManager) http.HandlerFunc {
 	type request struct {
 		Renju    *game.RenjuConfigDTO `json:"renju"`
+		Softmax  *game.SoftmaxTopPDTO `json:"softmax"`
 		Depth    int                  `json:"depth"`
 		MaxNodes int64                `json:"maxNodes"`
 	}
@@ -68,7 +69,13 @@ func handleCreateGame(m *game.GameManager) http.HandlerFunc {
 			cfg = &c
 		}
 
-		state, err := m.CreateGame(cfg, body.Depth, body.MaxNodes)
+		softmax, err := body.Softmax.ToConfig()
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		state, err := m.CreateGame(cfg, softmax, body.Depth, body.MaxNodes)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return

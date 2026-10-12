@@ -39,6 +39,7 @@ type job struct {
 	kind     jobKind
 	gameID   string
 	renjuCfg *renju.RenjuConfig
+	softmax  engine.SoftmaxTopPConfig
 	depth    int
 	maxNodes int64
 	row, col int
@@ -61,6 +62,7 @@ type GameSession struct {
 	Board     *board.Board
 	Turn      board.Stone
 	Config    renju.RenjuConfig
+	Softmax   engine.SoftmaxTopPConfig
 	Depth     int
 	MaxNodes  int64
 	History   []MoveRecord
@@ -122,6 +124,7 @@ func (m *GameManager) processCreateGame(j job) {
 		Board:     board.NewBoard(),
 		Turn:      board.Black,
 		Config:    cfg,
+		Softmax:   j.softmax,
 		Depth:     depth,
 		MaxNodes:  maxNodes,
 		Status:    StatusPlaying,
@@ -173,12 +176,7 @@ func (m *GameManager) processBestMove(j job) {
 	}
 
 	eng := engine.NewEngine(g.Config, g.Depth)
-	eng.SetSoftmaxTopP(engine.SoftmaxTopPConfig{
-		Enabled:     true,
-		Temperature: 0.1,
-		TopP:        0.9,
-		Seed:        42,
-	})
+	eng.SetSoftmaxTopP(g.Softmax)
 	eng.MaxNodes = g.MaxNodes
 	y, x, score := eng.FindBestMove(g.Board, g.Turn)
 
@@ -248,9 +246,9 @@ func (m *GameManager) submit(j job) jobResult {
 // ============================================================
 
 // CreateGame: 새 게임을 만들고 초기 상태를 돌려준다.
-// cfg가 nil이면 서버 기본 렌주 설정, depth/maxNodes가 0 이하면 기본값을 쓴다.
-func (m *GameManager) CreateGame(cfg *renju.RenjuConfig, depth int, maxNodes int64) (GameStateDTO, error) {
-	res := m.submit(job{kind: jobCreateGame, renjuCfg: cfg, depth: depth, maxNodes: maxNodes})
+// 설정값을 주지 않으면 해당 설정을 기본값으로 설정
+func (m *GameManager) CreateGame(cfg *renju.RenjuConfig, softmax engine.SoftmaxTopPConfig, depth int, maxNodes int64) (GameStateDTO, error) {
+	res := m.submit(job{kind: jobCreateGame, renjuCfg: cfg, softmax: softmax, depth: depth, maxNodes: maxNodes})
 	return res.state, res.err
 }
 
@@ -373,6 +371,37 @@ func (d RenjuConfigDTO) ToConfig() renju.RenjuConfig {
 	}
 }
 
+func (d *SoftmaxTopPDTO) ToConfig() (engine.SoftmaxTopPConfig, error) {
+	cfg := engine.SoftmaxTopPConfig{
+		Enabled:     config.DefaultSoftmaxEnabled,
+		Temperature: config.DefaultSoftmaxTemperature,
+		TopP:        config.DefaultSoftmaxTopP,
+		Seed:        config.DefaultSoftmaxSeed,
+	}
+	if d == nil {
+		return cfg, nil
+	}
+	if d.Enabled != nil {
+		cfg.Enabled = *d.Enabled
+	}
+	if d.Temperature != nil {
+		if *d.Temperature <= 0 {
+			return cfg, fmt.Errorf("temperature는 0보다 커야 합니다: %v", *d.Temperature)
+		}
+		cfg.Temperature = *d.Temperature
+	}
+	if d.TopP != nil {
+		if *d.TopP <= 0 || *d.TopP > 1 {
+			return cfg, fmt.Errorf("topP는 0 초과 1 이하여야 합니다: %v", *d.TopP)
+		}
+		cfg.TopP = *d.TopP
+	}
+	if d.Seed != nil {
+		cfg.Seed = *d.Seed
+	}
+	return cfg, nil
+}
+
 type ErrorDTO struct {
 	Error string `json:"error"`
 }
@@ -386,4 +415,11 @@ type MoveDTO struct {
 	Y     int `json:"y"`
 	X     int `json:"x"`
 	Score int `json:"score"`
+}
+
+type SoftmaxTopPDTO struct {
+	Enabled     *bool    `json:"enabled"`
+	Temperature *float64 `json:"temperature"`
+	TopP        *float64 `json:"topP"`
+	Seed        *int64   `json:"seed"`
 }
