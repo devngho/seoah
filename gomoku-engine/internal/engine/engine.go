@@ -264,6 +264,13 @@ func patternScore(length int, openStart, openEnd bool) int {
 // 후보 수 생성
 // ============================================================
 
+func AbsInt(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
 // GenerateMoves: 기존 돌 주변 radius칸 이내의 빈칸만 후보로 반환 (탐색 범위 축소)
 func (e *Engine) GenerateMoves(b *board.Board, depth int) [][2]int {
 	radius := e.Radius
@@ -355,6 +362,9 @@ type Engine struct {
 	// MaxNodes: 한 번의 FindBestMove(=API 요청 한 번) 동안 탐색할 노드 수 상한. (0 = 무제한)
 	MaxNodes     int64
 	nodesVisited *int64
+
+	// 반복 심화와 병렬 루트 작업자들이 공유하는 전치표.
+	tt *TranspositionTable
 }
 
 type SoftmaxTopPConfig struct {
@@ -370,10 +380,33 @@ func (e *Engine) SetSoftmaxTopP(cfg SoftmaxTopPConfig) {
 }
 
 func NewEngine(cfg renju.RenjuConfig, maxDepth int) *Engine {
+	return NewEngineWithTranspositionTable(
+		cfg,
+		maxDepth,
+		NewTranspositionTable(defaultTranspositionTableSize),
+	)
+}
+
+// NewEngineWithTranspositionTable creates an engine that uses the supplied table.
+// Reusing the same table across searches preserves entries between moves.
+// Pass nil to allocate a new default-sized table.
+func NewEngineWithTranspositionTable(cfg renju.RenjuConfig, maxDepth int, tt *TranspositionTable) *Engine {
+	if tt == nil {
+		tt = NewTranspositionTable(defaultTranspositionTableSize)
+	}
+	return newEngine(cfg, maxDepth, tt)
+}
+
+// newEngine은 탐색 버퍼를 독립적으로 만들되, 전달된 전치표를 공유할 수 있게 한다.
+func newEngine(cfg renju.RenjuConfig, maxDepth int, tt *TranspositionTable) *Engine {
+	if maxDepth < 1 {
+		maxDepth = 1
+	}
 	e := &Engine{
 		Config:   cfg,
 		MaxDepth: maxDepth,
 		Radius:   2,
+		tt:       tt,
 	}
 	e.movesBufs = make([][][2]int, maxDepth+1)
 	e.scoreBufs = make([][]int, maxDepth+1)
@@ -448,7 +481,7 @@ func (e *Engine) FindBestMove(b *board.Board, player board.Stone) (int, int, int
 
 func (e *Engine) searchRoot(b *board.Board, player board.Stone, depth int) (int, int, int) {
 	moves := e.GenerateMoves(b, depth)
-	moves = e.orderMoves(b, moves, player, depth, true)
+	moves = e.orderMoves(b, moves, player, depth, true, e.pvMove, e.hasPV)
 
 	bestY, bestX := -1, -1
 	best := config.NegInf
@@ -488,7 +521,7 @@ type moveResult struct {
 // 리스트로 반환한다. searchRootParallel(argmax 선택)과 searchRootSoftmaxTopP
 func (e *Engine) evaluateRootMoves(b *board.Board, player board.Stone, depth int) []moveResult {
 	moves := e.GenerateMoves(b, depth)
-	moves = e.orderMoves(b, moves, player, depth, true)
+	moves = e.orderMoves(b, moves, player, depth, true, e.pvMove, e.hasPV)
 
 	// 불법 수는 미리 걸러낸다. isIllegal은 b를 일시적으로 바꿨다가 되돌리는
 	// 것 말고는 부수효과가 없고, 여기서는 아직 goroutine을 띄우기 전이라
@@ -530,7 +563,7 @@ func (e *Engine) evaluateRootMoves(b *board.Board, player board.Stone, depth int
 			// 탐색 버퍼는 독립적이라 데이터 레이스 없이 안전하게 재귀할 수 있다.
 			// MaxNodes/nodesVisited는 "요청 전체"에 대한 예산이므로 부모의
 			// 공유 카운터 포인터를 그대로 물려받는다 (워커마다 따로 세면 안 됨).
-			workerEngine := NewEngine(e.Config, e.MaxDepth)
+			workerEngine := newEngine(e.Config, e.MaxDepth, e.tt)
 			workerEngine.Radius = e.Radius
 			workerEngine.MaxNodes = e.MaxNodes
 			workerEngine.nodesVisited = e.nodesVisited
@@ -691,10 +724,42 @@ func (e *Engine) alphabeta(b *board.Board, depth int, alpha, beta int, player bo
 		return Evaluate(b, player)
 	}
 
+	// 현재 차례까지 포함한 해시가 같으면 동일한 탐색 상태다.
+	key := b.HashForTurn(player)
+	alphaOriginal, betaOriginal := alpha, beta
+	var preferredMove [2]int
+	hasPreferredMove := false
+
+	if entry, ok := e.tt.Probe(key); ok {
+		preferredMove, hasPreferredMove = decodeMove(entry.move)
+
+		// 얕은 결과라도 최선 수는 후보 정렬에 재사용한다.
+		// 점수는 현재 요청한 깊이 이상으로 탐색된 경우에만 재사용한다.
+		if int(entry.depth) >= depth {
+			score := int(entry.score)
+			switch entry.bound {
+			case ttExact:
+				return score
+			case ttLowerBound:
+				if score > alpha {
+					alpha = score
+				}
+			case ttUpperBound:
+				if score < beta {
+					beta = score
+				}
+			}
+			if alpha >= beta {
+				return score
+			}
+		}
+	}
+
 	moves := e.GenerateMoves(b, depth)
-	moves = e.orderMoves(b, moves, player, depth, false)
+	moves = e.orderMoves(b, moves, player, depth, false, preferredMove, hasPreferredMove)
 
 	best := config.NegInf
+	bestMove := uint16(0)
 	movesTried := 0
 
 	for _, m := range moves {
@@ -719,6 +784,7 @@ func (e *Engine) alphabeta(b *board.Board, depth int, alpha, beta int, player bo
 
 		if score > best {
 			best = score
+			bestMove = encodeMove(y, x)
 		}
 		if best > alpha {
 			alpha = best
@@ -732,19 +798,32 @@ func (e *Engine) alphabeta(b *board.Board, depth int, alpha, beta int, player bo
 		// 둘 수 있는 합법 수가 없음 (렌주 금수로 다 막힌 극단적 경우 등)
 		return Evaluate(b, player)
 	}
+
+	// 노드 예산이 소진된 탐색은 부분 결과이므로 전치표에 저장하지 않는다.
+	if !e.budgetExceeded() {
+		bound := ttExact
+		if best <= alphaOriginal {
+			bound = ttUpperBound
+		} else if best >= betaOriginal {
+			bound = ttLowerBound
+		}
+		e.tt.Store(key, depth, best, bound, bestMove)
+	}
 	return best
 }
 
 // orderMoves: 각 후보 수를 놓아봤을 때의 즉석 점수(연속 길이)로 정렬해서
 // 알파베타 가지치기 효율을 높임.
-func (e *Engine) orderMoves(b *board.Board, moves [][2]int, player board.Stone, depth int, isRoot bool) [][2]int {
+func (e *Engine) orderMoves(b *board.Board, moves [][2]int, player board.Stone, depth int, isRoot bool, preferredMove [2]int, hasPreferredMove bool) [][2]int {
 	scores := e.scoreBufs[depth][:0]
 	for _, m := range moves {
 		b.Set(m[0], m[1], player)
 		s := maxRunLength(b, m[0], m[1], player)
 		b.Set(m[0], m[1], board.Empty)
-		if isRoot && e.hasPV && m == e.pvMove {
-			s += 1_000_000 // PV 수는 무조건 최우선으로 탐색
+		if hasPreferredMove && m == preferredMove {
+			s += 10_000_000 // 전치표/PV에서 가져온 수를 가장 먼저 탐색
+		} else if isRoot && e.hasPV && m == e.pvMove {
+			s += 1_000_000
 		}
 		scores = append(scores, s)
 	}

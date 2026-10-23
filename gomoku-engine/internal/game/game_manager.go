@@ -58,17 +58,19 @@ type jobResult struct {
 }
 
 type GameSession struct {
-	ID        string
-	Board     *board.Board
-	Turn      board.Stone
-	Config    renju.RenjuConfig
-	Softmax   engine.SoftmaxTopPConfig
-	Depth     int
-	MaxNodes  int64
-	History   []MoveRecord
-	Status    GameStatus
-	Winner    board.Stone
-	CreatedAt time.Time
+	ID       string
+	Board    *board.Board
+	Turn     board.Stone
+	Config   renju.RenjuConfig
+	Softmax  engine.SoftmaxTopPConfig
+	Depth    int
+	MaxNodes int64
+	// 전치표는 게임 세션 소유다. 매 턴 새 Engine을 생성해도 이전 탐색 결과를 재사용한다.
+	transpositionTable *engine.TranspositionTable
+	History            []MoveRecord
+	Status             GameStatus
+	Winner             board.Stone
+	CreatedAt          time.Time
 }
 
 type GameStateDTO struct {
@@ -120,15 +122,16 @@ func (m *GameManager) processCreateGame(j job) {
 	}
 
 	g := &GameSession{
-		ID:        newGameID(),
-		Board:     board.NewBoard(),
-		Turn:      board.Black,
-		Config:    cfg,
-		Softmax:   j.softmax,
-		Depth:     depth,
-		MaxNodes:  maxNodes,
-		Status:    StatusPlaying,
-		CreatedAt: time.Now(),
+		ID:                 newGameID(),
+		Board:              board.NewBoard(),
+		Turn:               board.Black,
+		Config:             cfg,
+		Softmax:            j.softmax,
+		Depth:              depth,
+		MaxNodes:           maxNodes,
+		transpositionTable: engine.NewTranspositionTable(0),
+		Status:             StatusPlaying,
+		CreatedAt:          time.Now(),
 	}
 	m.games[g.ID] = g
 	j.resp <- jobResult{state: g.toDTO()}
@@ -175,7 +178,10 @@ func (m *GameManager) processBestMove(j job) {
 		return
 	}
 
-	eng := engine.NewEngine(g.Config, g.Depth)
+	if g.transpositionTable == nil {
+		g.transpositionTable = engine.NewTranspositionTable(0)
+	}
+	eng := engine.NewEngineWithTranspositionTable(g.Config, g.Depth, g.transpositionTable)
 	eng.SetSoftmaxTopP(g.Softmax)
 	eng.MaxNodes = g.MaxNodes
 	y, x, score := eng.FindBestMove(g.Board, g.Turn)

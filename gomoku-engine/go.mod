@@ -1,3 +1,3 @@
 module gomoku-engine
 
-go 1.25.5
+go 1.27.2
