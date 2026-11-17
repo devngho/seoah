@@ -15,8 +15,12 @@ repositories {
 dependencies {
     implementation("net.dv8tion:JDA:6.6.0")
     implementation("club.minnced:jda-ktx:0.15.0")
+    // Discord voice is end-to-end encrypted (DAVE)
+    implementation("club.minnced:jdave-api:0.1.8")
+    implementation("club.minnced:jdave-native-linux-x86-64:0.1.8")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
     implementation("com.akuleshov7:ktoml-core:0.7.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
 
     implementation(platform("io.insert-koin:koin-bom:4.2.0"))
     implementation("io.insert-koin:koin-core")
@@ -27,10 +31,12 @@ dependencies {
     implementation("com.google.genai:google-genai:1.76.0")
 
     testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
 }
 
 application {
     mainClass = "io.github.devngho.seoah.MainKt"
+    applicationDefaultJvmArgs = listOf("--enable-native-access=ALL-UNNAMED") // jdave
 }
 
 kotlin {

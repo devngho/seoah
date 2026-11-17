@@ -1,0 +1,84 @@
+# Sample config for the Kotlin core. Copy it to config.toml (next to this file) and fill in the keys.
+# Lines starting with "# " are notes; lines starting with "#" and a setting are optional settings, shown with
+# their defaults unless noted. Remove the "#" to change one.
+# Keep at least one setting in every section: the parser rejects a section that is empty.
+
+[logging]
+# TRACE, DEBUG, INFO, WARN, ERROR or OFF
+level = "INFO"
+
+
+[lmConfig]
+# The only provider so far.
+provider = "gemini-ai-studio"
+apiKey = "[put your Gemini API key here]"
+model = "gemini-3.5-flash-lite"
+
+# The system prompt. Messages reach the model as "name said: text", so it is worth saying so here.
+prompt = '''
+You are a helpful assistant in a Discord server.
+Several people talk to you at once; each message starts with who said it, as "name said: ...".
+'''
+
+[lmConfig.etc]
+# How much the model thinks before answering: MINIMAL, LOW, MEDIUM or HIGH.
+thinking_effort = "LOW"
+# Let the model open links people send (Gemini's own url_context tool). Off unless set to "true".
+#url_context = "true"
+# The model that transcribes speech when [asr] provider is "gemini". Defaults to the chat model above.
+#asr_model = "gemini-3.5-flash-lite"
+
+
+[discord]
+token = "[put your Discord bot token here]"
+# How long to wait for follow-up messages before replying to a typed message, in milliseconds.
+#debounceMs = 2500
+
+# Commands, typed as a message:
+#   [seoah off] / [seoah on]   stop / resume replying in that channel
+#   [seoah join]               join the voice channel whose chat this is, or the one you are in
+#   [seoah leave]              leave the voice channel
+
+
+# Speech to text, for voice channels.
+[asr]
+# "gemini" (uses the key above), or "whisper" for a local whisper.cpp server.
+provider = "gemini"
+
+# The rest of this section is for "whisper" only.
+# A language code such as "ko", or "auto" to detect it. A fixed language is more reliable on short utterances.
+#language = "auto"
+# Where a whisper-server that is already running takes uploads. Ignored when [asr.server] is set.
+#url = "http://127.0.0.1:8080/inference"
+# The model name, only for servers that host several (OpenAI-style ones).
+#model = "large-v3"
+
+# Have the bot start whisper-server itself, on a port it picks. It adds --host and --port to the command.
+#[asr.server]
+#workingDir = "~/whisper.cpp"
+#command = ["build/bin/whisper-server", "-m", "models/ggml-large-v3-turbo.bin"]
+#startupTimeoutSeconds = 120
+
+
+# Text to speech. In a voice channel replies are spoken; elsewhere the audio is attached to each message.
+[tts]
+# "none" (text only), or "cosyvoice-cpp" for a local cosyvoice.cpp server.
+provider = "none"
+
+# The rest of this section is for "cosyvoice-cpp" only.
+# The server's --served-model-name, and a voice it was given with --voice-prompt.
+#model = "seoah-v3"
+#voice = "seoah"
+# Play audio while it is still being synthesized. Streaming costs the server several times the work,
+# so set this to false where synthesis is slower than speech (e.g. on a laptop's integrated GPU).
+#stream = true
+# The address of a cosyvoice-server that is already running, and its --api-key if it has one.
+# Both are ignored when [tts.server] is set.
+#url = "http://127.0.0.1:8080"
+#apiKey = "[the server's api key]"
+
+# Have the bot start cosyvoice-server itself, on a port it picks. It adds --host, --port and --api-key.
+#[tts.server]
+#workingDir = "~/cosyvoice.cpp"
+#command = ["build/bin/cosyvoice-server", "--api", "--model", "/path/to/model-q8.gguf", "--voice-prompt", "seoah=/path/to/prompt.gguf", "--served-model-name", "seoah-v3", "--backend", "Vulkan0"]
+#startupTimeoutSeconds = 120

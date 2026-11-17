@@ -7,28 +7,33 @@ import java.io.File
 
 class TOMLConfigProvider: ConfigProvider {
     private var reloadRequired = false
+    private var loadedConfig: Config? = null
     private val toml = Toml(
         inputConfig = TomlInputConfig(
             ignoreUnknownNames = true
         )
     )
 
-    override val config: Config by lazy {
-        val file = File("../config.toml")
-        if (!file.exists()) {
-            throw IllegalStateException("Config file not found: ${file.absolutePath}")
-        }
+    override val config: Config
+        get() = synchronized(this) {
+            if (loadedConfig == null || reloadRequired) {
+                val file = File("../config.toml")
+                if (!file.exists()) {
+                    throw IllegalStateException("Config file not found: ${file.absolutePath}")
+                }
 
-        val config = file.readText().let { tomlString ->
-            try {
-                toml.decodeFromString<Config>(tomlString)
-            } catch (e: Exception) {
-                throw IllegalStateException("Failed to parse config file: ${file.absolutePath}", e)
+                loadedConfig = file.readText().let { tomlString ->
+                    try {
+                        toml.decodeFromString<Config>(tomlString)
+                    } catch (e: Exception) {
+                        throw IllegalStateException("Failed to parse config file: ${file.absolutePath}", e)
+                    }
+                }
+                reloadRequired = false
             }
-        }
 
-        config
-    }
+            loadedConfig!!
+        }
 
     override suspend fun reload() {
         synchronized(this) {
